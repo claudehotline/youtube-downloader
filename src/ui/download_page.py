@@ -467,9 +467,17 @@ class DownloadPage(QWidget):
                     self.status_label.setText("准备转换WebM为MP4格式...")
                     self.progress_bar.setValue(0)  # 重置进度条
                     
+                    # 创建转换选项
+                    convert_options = {
+                        'preset': 'medium',  # 转换速度与质量平衡
+                        'crf': 22,           # 视频质量参数
+                        'audio_bitrate': '192k'  # 音频比特率
+                    }
+                    
                     # 创建并启动转换线程
-                    self.convert_thread = ConvertThread(file_path)
+                    self.convert_thread = ConvertThread(file_path, options=convert_options)
                     self.convert_thread.convert_progress.connect(self.on_convert_progress)
+                    self.convert_thread.convert_percent.connect(self.on_convert_percent)
                     self.convert_thread.convert_finished.connect(self.on_convert_finished)
                     self.convert_thread.start()
                     
@@ -485,14 +493,18 @@ class DownloadPage(QWidget):
     def on_convert_progress(self, message):
         """处理转换进度更新"""
         self.status_label.setText(message)
-        # 使用不确定进度条表示转换进行中
-        self.progress_bar.setRange(0, 0)
+        
+    def on_convert_percent(self, percent):
+        """处理转换百分比更新"""
+        # 更新进度条
+        self.progress_bar.setRange(0, 100)  # 确保范围正确
+        self.progress_bar.setValue(percent)
         
     def on_convert_finished(self, success, message, file_path):
         """处理转换完成"""
         # 恢复进度条的正常范围
         self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(100)
+        self.progress_bar.setValue(100 if success else 0)
         self.download_button.setEnabled(True)
         
         if success:

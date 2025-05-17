@@ -78,21 +78,42 @@ class ConvertThread(QThread):
     """处理WebM到MP4格式转换的线程"""
     convert_progress = Signal(str)  # 转换进度信息
     convert_finished = Signal(bool, str, str)  # 成功状态，消息，文件路径
+    convert_percent = Signal(int)  # 转换进度百分比
     
-    def __init__(self, webm_file_path):
+    def __init__(self, webm_file_path, options=None):
         super().__init__()
         self.webm_file_path = webm_file_path
         self.is_cancelled = False
+        self.options = options or {}
     
     def run(self):
         try:
             from src.utils.video_utils import convert_webm_to_mp4
             
             # 发送开始转换信号
-            self.convert_progress.emit("正在转换WebM为MP4格式...")
+            self.convert_progress.emit("正在准备转换WebM为MP4格式...")
+            
+            # 设置进度回调函数
+            def on_progress(percent, message):
+                self.convert_percent.emit(percent)
+                self.convert_progress.emit(message)
+                
+                # 检查是否被取消
+                if self.is_cancelled:
+                    return False  # 返回False表示需要取消
+                return True  # 返回True表示继续
             
             # 执行转换
-            mp4_file = convert_webm_to_mp4(self.webm_file_path)
+            mp4_file = convert_webm_to_mp4(
+                self.webm_file_path,
+                progress_callback=on_progress,
+                options=self.options
+            )
+            
+            # 检查是否被取消
+            if self.is_cancelled:
+                self.convert_finished.emit(False, "转换已取消", self.webm_file_path)
+                return
             
             # 检查转换结果
             if mp4_file != self.webm_file_path:  # 转换成功
