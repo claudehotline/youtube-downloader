@@ -251,7 +251,7 @@ class YtDownloader:
             # 1. 首先处理字幕下载
             if subtitles and len(subtitles) > 0:
                 if progress_callback:
-                    progress_callback(5, "正在下载字幕...")
+                    progress_callback(0, "正在下载字幕...")
                 
                 subtitle_cmd = [
                     self.ytdlp_path, 
@@ -303,7 +303,7 @@ class YtDownloader:
             # 2. 处理缩略图下载
             if download_thumbnail:
                 if progress_callback:
-                    progress_callback(10, "正在下载封面...")
+                    progress_callback(0, "正在下载封面...")
                 
                 thumbnail_cmd = [
                     self.ytdlp_path, 
@@ -360,7 +360,6 @@ class YtDownloader:
             # 4. 下载视频
             # 基本参数
             cmd = [self.ytdlp_path, 
-                   "-q",           # 安静模式，减少输出
                    url, 
                    "--no-mtime",  # 不使用视频上传时间作为文件修改时间
                    "-o", os.path.join(output_dir, "%(title)s.%(ext)s"),  # 设置输出路径
@@ -386,7 +385,7 @@ class YtDownloader:
             
             # 初始化进度
             if progress_callback:
-                progress_callback(15, "正在准备下载视频...")
+                progress_callback(0, "正在准备下载视频...")
             
             # 记录完整命令行
             self.debug(f"执行命令: {' '.join(cmd)}")
@@ -404,7 +403,7 @@ class YtDownloader:
             # 解析进度的正则表达式
             progress_pattern = re.compile(r'\[download\]\s+(\d+\.\d+)%')
             eta_pattern = re.compile(r'ETA\s+(\d+:\d+)')
-            speed_pattern = re.compile(r'(\d+\.\d+\w+/s)')
+            speed_pattern = re.compile(r'(\d+\.\d+\s*\w+/s)')
             merge_pattern = re.compile(r'\[Merger\]|正在合并|Merging')
             
             # 上次进度更新值和时间
@@ -431,9 +430,9 @@ class YtDownloader:
                         
                         # 控制进度更新频率，避免频繁更新UI
                         current_time = time.time()
-                        if percent > last_percent + 1 or current_time - last_update_time > 1.0:
-                            # 将下载进度映射到15%-95%之间（因为前15%用于字幕和封面）
-                            ui_percent = 15 + int(percent * 0.8)
+                        if percent > last_percent or current_time - last_update_time > 0.5:
+                            # 直接使用实际进度，不再映射到15%-95%区间
+                            ui_percent = percent  # 使用原始百分比
                             
                             # 提取ETA和速度
                             eta = "未知"

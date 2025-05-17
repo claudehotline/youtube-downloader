@@ -379,7 +379,8 @@ class DownloadPage(QWidget):
         self.status_label.setText(message)
         
         if percent > 0:
-            self.progress_detail_label.setText(f"当前进度: {percent}%")
+            # 显示完整的下载信息
+            self.progress_detail_label.setText(message)
         else:
             self.progress_detail_label.setText("")
         
