@@ -376,16 +376,32 @@ class DownloadPage(QWidget):
     def update_progress(self, percent, message):
         """更新下载进度"""
         self.progress_bar.setValue(percent)
-        self.status_label.setText(message)
         
-        if percent > 0:
-            # 显示完整的下载信息
+        # 从消息中提取下载状态和详细信息
+        if "下载中" in message:
+            # 状态标签只显示简单状态
+            self.status_label.setText("正在下载中...")
+            # 详情标签显示速度和剩余时间
+            self.progress_detail_label.setText(message)
+        elif "合并" in message:
+            self.status_label.setText("正在合并音视频...")
+            self.progress_detail_label.setText("")
+        elif "准备" in message:
+            self.status_label.setText("正在准备下载...")
+            self.progress_detail_label.setText("")
+        elif "取消" in message:
+            self.status_label.setText("下载已取消")
+            self.progress_detail_label.setText("")
+            self.download_complete(False, "下载已取消")
+        elif "完成" in message:
+            self.status_label.setText("下载完成")
+            self.progress_detail_label.setText("")
+        elif "失败" in message:
+            self.status_label.setText("下载失败")
             self.progress_detail_label.setText(message)
         else:
-            self.progress_detail_label.setText("")
-        
-        if message == "下载已取消":
-            self.download_complete(False, "下载已取消")
+            # 其他情况下保持原样
+            self.status_label.setText(message)
             self.progress_detail_label.setText("")
     
     def download_complete(self, success, message):
