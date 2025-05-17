@@ -373,28 +373,30 @@ def get_dark_style():
     
     /* 特殊功能按钮样式 */
     QPushButton#downloadButton {
-        background-color: #2e7d32;
+        background-color: #2d6a4f;
         font-weight: bold;
+        color: rgba(255, 255, 255, 0.9);
     }
     
     QPushButton#downloadButton:hover {
-        background-color: #388e3c;
+        background-color: #40916c;
     }
     
     QPushButton#downloadButton:pressed {
-        background-color: #1b5e20;
+        background-color: #1b4332;
     }
     
     QPushButton#cancelButton {
-        background-color: #c62828;
+        background-color: #7d3c3c;
+        color: rgba(255, 255, 255, 0.9);
     }
     
     QPushButton#cancelButton:hover {
-        background-color: #d32f2f;
+        background-color: #a25050;
     }
     
     QPushButton#cancelButton:pressed {
-        background-color: #b71c1c;
+        background-color: #5c2c2c;
     }
     
     QPushButton#saveButton {
