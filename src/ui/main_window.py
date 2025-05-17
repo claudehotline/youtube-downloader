@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                               QStackedWidget, QPushButton, QVBoxLayout,
                               QStyle, QMessageBox, QApplication)
 from PySide6.QtCore import Qt, Slot
+import logging
 
 from src.ui.download_page import DownloadPage
 from src.ui.settings_page import SettingsPage
@@ -15,13 +16,17 @@ from src.ui.styles import (get_application_style, get_navigation_button_style,
                           get_chrome_dark_active_navigation_button_style)
 from src.threads import FetchInfoThread, DownloadThread
 from src.downloader import YtDownloader
-from src.config import UI_MIN_WIDTH, UI_MIN_HEIGHT, APP_NAME
+from src.config import UI_MIN_WIDTH, UI_MIN_HEIGHT, APP_NAME, TEMP_DIR, DOWNLOADS_DIR
 from src.config_manager import ConfigManager
+from src.utils.video_utils import clean_old_files
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        
+        # 自动清理过期临时文件
+        self.clean_temp_files()
         
         # 初始化配置管理器
         self.config_manager = ConfigManager()
@@ -388,3 +393,17 @@ class MainWindow(QMainWindow):
         # 如果界面已经初始化，更新导航按钮样式
         if hasattr(self, 'stacked_widget'):
             self.update_nav_button_style(self.stacked_widget.currentIndex()) 
+    
+    def clean_temp_files(self):
+        """清理过期的临时文件"""
+        try:
+            # 清理临时目录中超过3天的webm和part文件
+            temp_deleted = clean_old_files(TEMP_DIR, days=3, extensions=['.webm', '.part', '.temp'])
+            
+            # 清理下载目录中超过30天的webm文件
+            downloads_deleted = clean_old_files(DOWNLOADS_DIR, days=30, extensions=['.webm'])
+            
+            if temp_deleted > 0 or downloads_deleted > 0:
+                logging.info(f"自动清理完成: 临时目录删除了{temp_deleted}个文件，下载目录删除了{downloads_deleted}个过期WebM文件")
+        except Exception as e:
+            logging.error(f"自动清理临时文件失败: {e}") 

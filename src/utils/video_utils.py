@@ -5,7 +5,64 @@ import time
 import ffmpeg  # 导入ffmpeg-python库
 import re
 import threading
+import datetime
 from typing import Callable, Optional, Dict, Any
+
+def clean_old_files(directory, days=7, extensions=None):
+    """
+    清理指定目录中超过指定天数的文件
+    
+    Args:
+        directory: 要清理的目录
+        days: 文件保留天数，超过此天数的文件会被删除
+        extensions: 要清理的文件扩展名列表，如 ['.webm', '.part']，为None时清理所有文件
+        
+    Returns:
+        删除的文件数量
+    """
+    if not os.path.exists(directory) or not os.path.isdir(directory):
+        logging.warning(f"指定目录不存在或不是一个目录: {directory}")
+        return 0
+    
+    # 当前时间
+    current_time = time.time()
+    # 一天的秒数
+    seconds_per_day = 86400  # 24 * 60 * 60
+    
+    # 要删除的文件计数
+    deleted_count = 0
+    
+    try:
+        # 遍历目录中的所有文件
+        for filename in os.listdir(directory):
+            file_path = os.path.join(directory, filename)
+            
+            # 只处理文件，不处理目录
+            if not os.path.isfile(file_path):
+                continue
+            
+            # 如果指定了扩展名，则只处理指定扩展名的文件
+            if extensions:
+                file_ext = os.path.splitext(filename)[1].lower()
+                if file_ext not in extensions:
+                    continue
+            
+            # 获取文件的修改时间
+            file_mod_time = os.path.getmtime(file_path)
+            
+            # 如果文件修改时间距今超过指定天数，则删除
+            if current_time - file_mod_time > days * seconds_per_day:
+                try:
+                    os.remove(file_path)
+                    deleted_count += 1
+                    logging.info(f"已删除过期文件: {file_path} (超过{days}天未修改)")
+                except Exception as e:
+                    logging.error(f"删除文件失败: {file_path}, 错误: {e}")
+        
+        return deleted_count
+    except Exception as e:
+        logging.error(f"清理过期文件过程中发生错误: {e}")
+        return deleted_count
 
 def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
     """

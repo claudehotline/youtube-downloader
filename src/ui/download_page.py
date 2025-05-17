@@ -508,25 +508,20 @@ class DownloadPage(QWidget):
         self.download_button.setEnabled(True)
         
         if success:
-            # 询问是否删除原始webm文件
+            # 获取原始webm文件路径
             webm_file = file_path.replace('.mp4', '.webm')
-            reply = QMessageBox.question(
-                self, 
-                "转换成功", 
-                f"WebM文件已成功转换为MP4格式。\n新文件: {file_path}\n\n是否删除原始WebM文件?",
-                QMessageBox.Yes | QMessageBox.No, 
-                QMessageBox.No
-            )
             
-            if reply == QMessageBox.Yes and os.path.exists(webm_file):
-                try:
+            # 直接删除原始webm文件，不再询问
+            try:
+                if os.path.exists(webm_file):
                     os.remove(webm_file)
+                    converted_message = f"下载并转换完成，已自动删除原始WebM文件，路径: {file_path}"
+                    logging.info(f"已自动删除原始WebM文件: {webm_file}")
+                else:
                     converted_message = f"下载并转换完成, 路径: {file_path}"
-                except Exception as e:
-                    logging.error(f"删除原始文件失败: {e}")
-                    converted_message = f"下载并转换完成, 路径: {file_path} (未能删除原始WebM文件)"
-            else:
-                converted_message = f"下载并转换完成, 路径: {file_path}"
+            except Exception as e:
+                logging.error(f"删除原始文件失败: {e}")
+                converted_message = f"下载并转换完成, 路径: {file_path} (未能删除原始WebM文件: {str(e)})"
             
             QMessageBox.information(self, "完成", converted_message)
         else:
