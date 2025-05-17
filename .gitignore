@@ -1,0 +1,59 @@
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 单元测试、覆盖率报告
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# 日志文件
+*.log
+
+# IDE相关
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# 构建产物
+dist/
+build/
+*.exe
+!cmd/yt-dlp.exe  # 保留yt-dlp.exe
+
+# 项目特定
+# config.ini  # 如果这是用户特定的配置文件，取消注释
+Output/     # Inno Setup生成的安装包目录
+
+# yt-dlp生成的临时文件
+*.temp
+*.part
+
+# 其他
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local 
