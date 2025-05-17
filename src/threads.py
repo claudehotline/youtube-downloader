@@ -1,4 +1,5 @@
 from PySide6.QtCore import QThread, Signal
+import os
 
 
 class FetchInfoThread(QThread):
@@ -41,7 +42,8 @@ class DownloadThread(QThread):
         try:
             format_spec = f"{self.video_format}+{self.audio_format}" if self.video_format and self.audio_format else (self.video_format or self.audio_format)
             
-            self.downloader.download(
+            # 获取下载的文件路径
+            downloaded_file = self.downloader.download(
                 self.video_url, 
                 format_spec, 
                 self.subtitles, 
@@ -52,9 +54,13 @@ class DownloadThread(QThread):
                 self.use_cookies,
                 self.browser
             )
+            
             # 只有在未取消的情况下才发送完成信号
             if not self.downloader.is_cancelled:
-                self.download_finished.emit(True, "下载完成！")
+                if downloaded_file and os.path.exists(downloaded_file):
+                    self.download_finished.emit(True, f"下载完成, 路径: {downloaded_file}")
+                else:
+                    self.download_finished.emit(True, "下载完成！")
         except Exception as e:
             self.download_finished.emit(False, f"下载失败: {str(e)}")
     

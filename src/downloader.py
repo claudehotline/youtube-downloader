@@ -234,11 +234,28 @@ class YtDownloader:
     def download(self, url, format_spec, subtitles=None, download_thumbnail=False, 
                output_dir=None, progress_callback=None, threads=10,
                use_cookies=False, browser=None):
-        """下载视频"""
+        """
+        下载视频
+        
+        Args:
+            url: YouTube视频链接
+            format_spec: 格式选择
+            subtitles: 字幕语言列表
+            download_thumbnail: 是否下载缩略图
+            output_dir: 输出目录
+            progress_callback: 进度回调函数
+            threads: 下载线程数
+            use_cookies: 是否使用浏览器cookie
+            browser: 浏览器类型
+            
+        Returns:
+            str: 下载文件的路径
+        """
         try:
             # 如果之前有下载任务被取消，重置状态
             self.is_cancelled = False
             self.download_process = None
+            downloaded_file_path = None
             
             # 调试信息
             self.debug(f"开始下载：{url}")
@@ -298,7 +315,7 @@ class YtDownloader:
                 if self.is_cancelled:
                     if progress_callback:
                         progress_callback(0, "下载已取消")
-                    return
+                    return None
             
             # 2. 处理缩略图下载
             if download_thumbnail:
@@ -349,13 +366,13 @@ class YtDownloader:
                 if self.is_cancelled:
                     if progress_callback:
                         progress_callback(0, "下载已取消")
-                    return
+                    return None
             
             # 3. 如果没有指定格式，则不下载视频
             if not format_spec:
                 if progress_callback:
                     progress_callback(100, "下载完成")
-                return
+                return None
             
             # 4. 下载视频
             # 基本参数
@@ -467,16 +484,46 @@ class YtDownloader:
             if self.download_process:
                 self.download_process.wait()
             
+            # 如果下载成功，找到下载的文件
+            if self.download_process.returncode == 0 and not self.is_cancelled:
+                # 检查是否有输出的文件
+                output_glob_pattern = os.path.join(output_dir, "*.mp4")  # 先尝试mp4
+                output_files = glob.glob(output_glob_pattern)
+                
+                if not output_files:
+                    # 如果没有mp4文件，尝试查找webm文件
+                    output_glob_pattern = os.path.join(output_dir, "*.webm")
+                    output_files = glob.glob(output_glob_pattern)
+                
+                if not output_files:
+                    # 如果仍然没有找到，尝试查找所有常见视频文件格式
+                    for ext in ['mkv', 'avi', 'mov', 'flv', 'wmv', 'm4a', 'mp3', 'ogg', 'opus']:
+                        output_glob_pattern = os.path.join(output_dir, f"*.{ext}")
+                        output_files = glob.glob(output_glob_pattern)
+                        if output_files:
+                            break
+                
+                # 按照修改时间排序，获取最新的文件
+                if output_files:
+                    output_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                    downloaded_file_path = output_files[0]
+                    self.debug(f"下载完成，文件路径: {downloaded_file_path}")
+        
             # 如果被取消，返回取消消息
             if self.is_cancelled:
                 if progress_callback:
                     progress_callback(0, "下载已取消")
-                return
-                
+                return None
+            
             # 下载完成
             if progress_callback:
-                progress_callback(100, "下载完成")
-                
+                if downloaded_file_path:
+                    progress_callback(100, f"下载完成: {downloaded_file_path}")
+                else:
+                    progress_callback(100, "下载完成")
+            
+            return downloaded_file_path  # 返回下载的文件路径
+            
         except Exception as e:
             self.debug(f"下载异常: {str(e)}")
             if progress_callback:
