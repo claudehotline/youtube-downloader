@@ -115,6 +115,7 @@ class SettingsPage(QWidget):
         self.theme_combo = QComboBox()
         self.theme_combo.addItem("默认 (Fusion)", "Fusion")
         self.theme_combo.addItem("深色 (Dark)", "Dark")
+        self.theme_combo.addItem("Chrome深色 (ChromeDark)", "ChromeDark")
         self.theme_combo.addItem("浅蓝 (LightBlue)", "LightBlue")
         # 从配置中读取主题
         theme = self.config_manager.get("UI", "Theme", fallback="Fusion")

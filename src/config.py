@@ -6,8 +6,8 @@ APP_VERSION = "1.0.0"
 
 # UI 设置
 UI_THEME = "Fusion"  # fusion, windowsvista, windows
-UI_MIN_WIDTH = 800
-UI_MIN_HEIGHT = 600
+UI_MIN_WIDTH = 1000
+UI_MIN_HEIGHT = 720
 
 # 网络设置
 DEFAULT_TIMEOUT = 30

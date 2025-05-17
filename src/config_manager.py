@@ -23,8 +23,8 @@ class ConfigManager:
             },
             "UI": {
                 "Theme": "Fusion",
-                "MinWidth": "800",
-                "MinHeight": "600"
+                "MinWidth": "1000",
+                "MinHeight": "720"
             }
         }
         

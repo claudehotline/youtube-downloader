@@ -55,7 +55,7 @@ class DownloadPage(QWidget):
         # 左侧封面区域
         left_layout = QVBoxLayout()
         self.thumbnail_label = QLabel("请输入视频链接并获取信息")
-        self.thumbnail_label.setFixedSize(320, 180)
+        self.thumbnail_label.setFixedSize(360, 200)  # 增加封面尺寸
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
         self.thumbnail_label.setStyleSheet("color: #888888;")
         left_layout.addWidget(self.thumbnail_label)
@@ -66,6 +66,7 @@ class DownloadPage(QWidget):
         
         self.title_label = QLabel("")
         self.title_label.setWordWrap(True)
+        self.title_label.setMinimumHeight(60)  # 设置最小高度，确保能显示多行标题
         self.duration_label = QLabel("")
         self.uploader_label = QLabel("")
         
@@ -77,6 +78,9 @@ class DownloadPage(QWidget):
         # 将左右布局添加到信息区域
         info_layout.addLayout(left_layout, 4)  # 左侧占40%
         info_layout.addLayout(right_layout, 6)  # 右侧占60%
+        
+        # 设置信息区域的最小高度
+        info_group.setMinimumHeight(220)
         
         layout.addWidget(info_group)
         
@@ -119,21 +123,21 @@ class DownloadPage(QWidget):
         self.subtitle_list = QListWidget()
         self.subtitle_list.setEnabled(False)
         self.subtitle_list.setSelectionMode(QListWidget.MultiSelection)
-        self.subtitle_list.setMinimumWidth(100)
-        self.subtitle_list.setMaximumWidth(300)
+        self.subtitle_list.setMinimumWidth(150)
+        self.subtitle_list.setMaximumWidth(350)
         # 设置字幕列表的固定高度
-        self.subtitle_list.setMaximumHeight(100)
+        self.subtitle_list.setMinimumHeight(120)
         
         subtitle_layout.addWidget(QLabel("选择字幕语言:"))
         subtitle_layout.addWidget(self.subtitle_list)
         subtitle_layout.addStretch()  # 添加弹性空间，使内容靠上排列
         
         # 设置整个格式选择区域的高度限制
-        formats_group.setMaximumHeight(180)
-        subtitle_group.setMaximumHeight(180)
+        formats_group.setMinimumHeight(200)
+        subtitle_group.setMinimumHeight(200)
         
-        options_layout.addWidget(formats_group, 7)  # 占70%的宽度
-        options_layout.addWidget(subtitle_group, 3)  # 占30%的宽度
+        options_layout.addWidget(formats_group, 6)  # 占60%的宽度
+        options_layout.addWidget(subtitle_group, 4)  # 占40%的宽度
         
         layout.addLayout(options_layout)
         
@@ -228,10 +232,7 @@ class DownloadPage(QWidget):
             QMessageBox.warning(self, "警告", "请选择音频格式")
             return
             
-        # 检查字幕选择
-        if not selected_subtitles:
-            QMessageBox.warning(self, "警告", "请至少选择一种字幕")
-            return
+        # 字幕选择为可选项，不再进行强制检查
         
         # 确认选择
         message = "您选择的下载内容:\n\n"
