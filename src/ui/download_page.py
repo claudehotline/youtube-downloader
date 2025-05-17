@@ -9,6 +9,7 @@ import subprocess
 import os
 import logging
 from src.utils.video_utils import convert_webm_to_mp4
+from src.threads import ConvertThread  # 导入新的转换线程类
 
 
 class DownloadPage(QWidget):
@@ -463,43 +464,63 @@ class DownloadPage(QWidget):
                 file_path = message.split("路径:")[1].strip()
                 if os.path.exists(file_path) and file_path.endswith('.webm'):
                     # 显示转换中的状态
-                    self.status_label.setText("正在将WebM转换为MP4格式...")
-                    QApplication.processEvents()
+                    self.status_label.setText("准备转换WebM为MP4格式...")
+                    self.progress_bar.setValue(0)  # 重置进度条
                     
-                    # 执行转换
-                    mp4_file = convert_webm_to_mp4(file_path)
+                    # 创建并启动转换线程
+                    self.convert_thread = ConvertThread(file_path)
+                    self.convert_thread.convert_progress.connect(self.on_convert_progress)
+                    self.convert_thread.convert_finished.connect(self.on_convert_finished)
+                    self.convert_thread.start()
                     
-                    if mp4_file != file_path:  # 转换成功
-                        # 询问是否删除原始webm文件
-                        reply = QMessageBox.question(
-                            self, 
-                            "转换成功", 
-                            f"WebM文件已成功转换为MP4格式。\n新文件: {mp4_file}\n\n是否删除原始WebM文件?",
-                            QMessageBox.Yes | QMessageBox.No, 
-                            QMessageBox.No
-                        )
-                        
-                        if reply == QMessageBox.Yes and os.path.exists(file_path):
-                            try:
-                                os.remove(file_path)
-                                converted_message = f"下载并转换完成, 路径: {mp4_file}"
-                            except Exception as e:
-                                logging.error(f"删除原始文件失败: {e}")
-                                converted_message = f"下载并转换完成, 路径: {mp4_file} (未能删除原始WebM文件)"
-                        else:
-                            converted_message = f"下载并转换完成, 路径: {mp4_file}"
-                        
-                        QMessageBox.information(self, "完成", converted_message)
-                        return
-                    else:
-                        # 转换失败但下载成功
-                        QMessageBox.warning(
-                            self, 
-                            "转换失败", 
-                            f"WebM文件转换为MP4失败，但下载已完成。\n文件路径: {file_path}"
-                        )
+                    # 禁用下载按钮，直到转换完成
+                    self.download_button.setEnabled(False)
+                    return  # 提前返回，等待转换完成
             
-            # 如果没有发生WebM转换或转换失败，显示原始的成功消息
+            # 如果没有发生WebM转换，显示原始的成功消息
             QMessageBox.information(self, "完成", message)
         elif message != "下载已取消":
-            QMessageBox.critical(self, "错误", message) 
+            QMessageBox.critical(self, "错误", message)
+            
+    def on_convert_progress(self, message):
+        """处理转换进度更新"""
+        self.status_label.setText(message)
+        # 使用不确定进度条表示转换进行中
+        self.progress_bar.setRange(0, 0)
+        
+    def on_convert_finished(self, success, message, file_path):
+        """处理转换完成"""
+        # 恢复进度条的正常范围
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.download_button.setEnabled(True)
+        
+        if success:
+            # 询问是否删除原始webm文件
+            webm_file = file_path.replace('.mp4', '.webm')
+            reply = QMessageBox.question(
+                self, 
+                "转换成功", 
+                f"WebM文件已成功转换为MP4格式。\n新文件: {file_path}\n\n是否删除原始WebM文件?",
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes and os.path.exists(webm_file):
+                try:
+                    os.remove(webm_file)
+                    converted_message = f"下载并转换完成, 路径: {file_path}"
+                except Exception as e:
+                    logging.error(f"删除原始文件失败: {e}")
+                    converted_message = f"下载并转换完成, 路径: {file_path} (未能删除原始WebM文件)"
+            else:
+                converted_message = f"下载并转换完成, 路径: {file_path}"
+            
+            QMessageBox.information(self, "完成", converted_message)
+        else:
+            # 转换失败但下载成功
+            QMessageBox.warning(
+                self, 
+                "转换失败", 
+                f"WebM文件转换为MP4失败，但下载已完成。\n文件路径: {file_path}\n\n错误信息: {message}"
+            ) 

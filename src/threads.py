@@ -71,3 +71,37 @@ class DownloadThread(QThread):
         # 调用下载器的取消方法
         if self.downloader:
             self.downloader.cancel_download()
+
+
+# 添加WebM到MP4的转换线程
+class ConvertThread(QThread):
+    """处理WebM到MP4格式转换的线程"""
+    convert_progress = Signal(str)  # 转换进度信息
+    convert_finished = Signal(bool, str, str)  # 成功状态，消息，文件路径
+    
+    def __init__(self, webm_file_path):
+        super().__init__()
+        self.webm_file_path = webm_file_path
+        self.is_cancelled = False
+    
+    def run(self):
+        try:
+            from src.utils.video_utils import convert_webm_to_mp4
+            
+            # 发送开始转换信号
+            self.convert_progress.emit("正在转换WebM为MP4格式...")
+            
+            # 执行转换
+            mp4_file = convert_webm_to_mp4(self.webm_file_path)
+            
+            # 检查转换结果
+            if mp4_file != self.webm_file_path:  # 转换成功
+                self.convert_finished.emit(True, "转换成功", mp4_file)
+            else:
+                self.convert_finished.emit(False, "转换失败", self.webm_file_path)
+                
+        except Exception as e:
+            self.convert_finished.emit(False, f"转换过程发生错误: {str(e)}", self.webm_file_path)
+    
+    def cancel(self):
+        self.is_cancelled = True
