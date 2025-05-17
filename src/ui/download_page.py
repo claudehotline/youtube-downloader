@@ -26,6 +26,11 @@ class DownloadPage(QWidget):
     def setup_ui(self):
         layout = QVBoxLayout(self)
         
+        # 添加页面标题
+        title_label = QLabel("下载YouTube视频")
+        title_label.setObjectName("pageTitle")
+        layout.addWidget(title_label)
+        
         # URL 输入区域
         url_layout = QHBoxLayout()
         url_label = QLabel("YouTube 视频链接:")
@@ -85,23 +90,24 @@ class DownloadPage(QWidget):
         
         # 视频格式选择
         video_format_layout = QVBoxLayout()
+        video_format_layout.setSpacing(8)
         video_format_label = QLabel("选择视频格式:")
         self.video_format_combo = QComboBox()
         self.video_format_combo.setEnabled(False)
-        self.video_format_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         video_format_layout.addWidget(video_format_label)
         video_format_layout.addWidget(self.video_format_combo)
         
         # 音频格式选择
         audio_format_layout = QVBoxLayout()
+        audio_format_layout.setSpacing(8)
         audio_format_label = QLabel("选择音频格式:")
         self.audio_format_combo = QComboBox()
         self.audio_format_combo.setEnabled(False)
-        self.audio_format_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         audio_format_layout.addWidget(audio_format_label)
         audio_format_layout.addWidget(self.audio_format_combo)
         
         formats_layout.addLayout(video_format_layout)
+        formats_layout.addSpacing(10)
         formats_layout.addLayout(audio_format_layout)
         formats_layout.addStretch()  # 添加弹性空间，使内容靠上排列
         
@@ -137,11 +143,13 @@ class DownloadPage(QWidget):
         download_group.setLayout(download_options_layout)
         
         self.download_button = QPushButton("开始下载")
+        self.download_button.setObjectName("downloadButton")
         self.download_button.setEnabled(False)
         self.download_button.clicked.connect(self.on_download_button_clicked)
         
         # 添加取消按钮
         self.cancel_button = QPushButton("取消下载")
+        self.cancel_button.setObjectName("cancelButton")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.on_cancel_button_clicked)
         

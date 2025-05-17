@@ -15,6 +15,11 @@ class SettingsPage(QWidget):
     def setup_ui(self):
         layout = QVBoxLayout(self)
         
+        # 添加页面标题
+        title_label = QLabel("设置")
+        title_label.setObjectName("pageTitle")
+        layout.addWidget(title_label)
+        
         # 下载设置组
         download_settings_group = QGroupBox("下载设置")
         download_settings_layout = QVBoxLayout(download_settings_group)
@@ -33,6 +38,7 @@ class SettingsPage(QWidget):
         
         # 线程数设置
         threads_layout = QHBoxLayout()
+        threads_layout.setSpacing(10)
         threads_label = QLabel("下载线程数:")
         self.threads_spinner = QComboBox()
         for i in [1, 2, 4, 8, 10, 16]:
@@ -40,6 +46,7 @@ class SettingsPage(QWidget):
         # 从配置中读取线程数
         threads = self.config_manager.getint("General", "Threads", fallback=10)
         self.threads_spinner.setCurrentText(str(threads))
+        threads_layout.setContentsMargins(0, 5, 0, 5)
         
         threads_layout.addWidget(threads_label)
         threads_layout.addWidget(self.threads_spinner)
@@ -70,6 +77,7 @@ class SettingsPage(QWidget):
         
         # 浏览器选择
         browser_layout = QHBoxLayout()
+        browser_layout.setSpacing(10)
         browser_label = QLabel("选择浏览器:")
         self.browser_combo = QComboBox()
         self.browser_combo.addItem("Chrome", "chrome")
@@ -84,6 +92,7 @@ class SettingsPage(QWidget):
         if index >= 0:
             self.browser_combo.setCurrentIndex(index)
         self.browser_combo.setEnabled(use_cookies)  # 根据配置启用或禁用
+        browser_layout.setContentsMargins(0, 5, 0, 5)
         
         browser_layout.addWidget(browser_label)
         browser_layout.addWidget(self.browser_combo)
@@ -97,6 +106,7 @@ class SettingsPage(QWidget):
         
         # 保存设置按钮
         save_settings_button = QPushButton("保存设置")
+        save_settings_button.setObjectName("saveButton")
         save_settings_button.clicked.connect(self.save_settings)
         
         # 添加所有设置组到页面

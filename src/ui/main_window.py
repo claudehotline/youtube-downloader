@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Slot
 from src.ui.download_page import DownloadPage
 from src.ui.settings_page import SettingsPage
 from src.ui.history_page import HistoryPage
+from src.ui.styles import get_application_style, get_navigation_button_style, get_active_navigation_button_style
 from src.threads import FetchInfoThread, DownloadThread
 from src.downloader import YtDownloader
 from src.config import UI_MIN_WIDTH, UI_MIN_HEIGHT, APP_NAME
@@ -26,6 +27,9 @@ class MainWindow(QMainWindow):
         self.last_logged_percent = 0
         
         self.setWindowTitle(APP_NAME)
+        
+        # 应用全局样式表
+        self.setStyleSheet(get_application_style())
         
         # 从配置读取窗口大小
         min_width = self.config_manager.getint("UI", "MinWidth", fallback=UI_MIN_WIDTH)
@@ -90,21 +94,7 @@ class MainWindow(QMainWindow):
         self.history_nav_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogInfoView))
         
         # 设置按钮样式
-        nav_button_style = """
-            QPushButton {
-                text-align: left;
-                padding: 10px;
-                padding-left: 15px;
-                border: none;
-                border-radius: 5px;
-                font-size: 13px;
-                color: #505050;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: #e8e8e8;
-            }
-        """
+        nav_button_style = get_navigation_button_style()
         
         self.download_nav_btn.setStyleSheet(nav_button_style)
         self.settings_nav_btn.setStyleSheet(nav_button_style)
@@ -322,37 +312,13 @@ class MainWindow(QMainWindow):
     
     def update_nav_button_style(self, index):
         """更新导航按钮样式"""
-        nav_button_style = """
-            QPushButton {
-                text-align: left;
-                padding: 10px;
-                padding-left: 15px;
-                border: none;
-                border-radius: 5px;
-                font-size: 13px;
-                color: #505050;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: #e8e8e8;
-            }
-        """
+        # 使用样式模块中定义的样式
+        nav_button_style = get_navigation_button_style()
+        active_style = get_active_navigation_button_style()
+        
         self.download_nav_btn.setStyleSheet(nav_button_style)
         self.settings_nav_btn.setStyleSheet(nav_button_style)
         self.history_nav_btn.setStyleSheet(nav_button_style)
-        
-        # 设置当前选中的导航按钮样式
-        active_style = nav_button_style + """
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                font-weight: 600;
-                text-align: center;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-            }
-        """
         
         if index == 0:
             self.download_nav_btn.setStyleSheet(active_style)
