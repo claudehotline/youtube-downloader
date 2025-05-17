@@ -8,7 +8,9 @@ from src.ui.settings_page import SettingsPage
 from src.ui.history_page import HistoryPage
 from src.ui.styles import (get_application_style, get_navigation_button_style, 
                           get_active_navigation_button_style, get_dark_style,
-                          get_dark_navigation_button_style, get_dark_active_navigation_button_style)
+                          get_dark_navigation_button_style, get_dark_active_navigation_button_style,
+                          get_light_theme_style, get_light_theme_navigation_button_style,
+                          get_light_theme_active_navigation_button_style)
 from src.threads import FetchInfoThread, DownloadThread
 from src.downloader import YtDownloader
 from src.config import UI_MIN_WIDTH, UI_MIN_HEIGHT, APP_NAME
@@ -321,6 +323,9 @@ class MainWindow(QMainWindow):
         if self.theme == "Dark":
             nav_button_style = get_dark_navigation_button_style()
             active_nav_button_style = get_dark_active_navigation_button_style()
+        elif self.theme == "LightBlue":
+            nav_button_style = get_light_theme_navigation_button_style()
+            active_nav_button_style = get_light_theme_active_navigation_button_style()
         else:
             nav_button_style = get_navigation_button_style()
             active_nav_button_style = get_active_navigation_button_style()
@@ -368,6 +373,8 @@ class MainWindow(QMainWindow):
         
         if theme == "Dark":
             self.setStyleSheet(get_dark_style())
+        elif theme == "LightBlue":
+            self.setStyleSheet(get_light_theme_style())
         else:  # 默认为Fusion主题
             self.setStyleSheet(get_application_style())
         

@@ -113,8 +113,9 @@ class SettingsPage(QWidget):
         theme_layout.setSpacing(10)
         theme_label = QLabel("界面主题:")
         self.theme_combo = QComboBox()
-        self.theme_combo.addItem("浅色 (Fusion)", "Fusion")
+        self.theme_combo.addItem("默认 (Fusion)", "Fusion")
         self.theme_combo.addItem("深色 (Dark)", "Dark")
+        self.theme_combo.addItem("浅蓝 (LightBlue)", "LightBlue")
         # 从配置中读取主题
         theme = self.config_manager.get("UI", "Theme", fallback="Fusion")
         index = self.theme_combo.findData(theme)
