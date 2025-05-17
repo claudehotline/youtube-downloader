@@ -8,7 +8,6 @@
 - 选择视频和音频格式
 - 选择字幕语言
 - 下载视频封面
-- 支持使用浏览器cookies进行年龄验证
 - 进度实时显示
 
 ## 系统要求
@@ -35,14 +34,3 @@ pip install -r requirements.txt
 ```
 python app.py
 ```
-
-## 构建可执行文件
-
-使用PyInstaller打包：
-```
-pyinstaller "YouTube下载器.spec"
-```
-
-## License
-
-MIT 
