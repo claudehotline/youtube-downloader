@@ -204,21 +204,52 @@ class DownloadPage(QWidget):
         
         # 获取选择的视频格式
         video_format = self.video_format_combo.currentData()
+        video_format_text = self.video_format_combo.currentText()
         
         # 获取选择的音频格式
         audio_format = self.audio_format_combo.currentData()
-        
-        # 检查视频和音频格式
-        if not video_format and not audio_format:
-            QMessageBox.warning(self, "警告", "请至少选择一种格式")
-            return
+        audio_format_text = self.audio_format_combo.currentText()
         
         # 获取选择的字幕
         selected_subtitles = []
+        selected_subtitles_text = []
         for i in range(self.subtitle_list.count()):
             item = self.subtitle_list.item(i)
             if item.isSelected():
                 selected_subtitles.append(item.data(Qt.UserRole))
+                selected_subtitles_text.append(item.text())
+        
+        # 检查视频和音频格式
+        if not video_format or not audio_format:
+            QMessageBox.warning(self, "警告", "请同时选择视频格式和音频格式")
+            return
+        
+        # 确认选择
+        message = "您选择的下载内容:\n\n"
+        
+        if video_format:
+            message += f"视频格式: {video_format_text}\n"
+        else:
+            message += "视频格式: 不下载视频\n"
+            
+        if audio_format:
+            message += f"音频格式: {audio_format_text}\n"
+        else:
+            message += "音频格式: 不下载音频\n"
+            
+        if selected_subtitles:
+            message += f"字幕: {', '.join(selected_subtitles_text)}\n"
+        else:
+            message += "字幕: 不下载字幕\n"
+            
+        message += "\n确认开始下载吗？"
+        
+        # 显示确认对话框
+        reply = QMessageBox.question(self, "确认下载", message, 
+                                      QMessageBox.Yes | QMessageBox.No, 
+                                      QMessageBox.Yes)
+        if reply == QMessageBox.No:
+            return
         
         # 发送下载信号
         self.download_requested.emit(
