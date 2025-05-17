@@ -220,8 +220,17 @@ class DownloadPage(QWidget):
                 selected_subtitles_text.append(item.text())
         
         # 检查视频和音频格式
-        if not video_format or not audio_format:
-            QMessageBox.warning(self, "警告", "请同时选择视频格式和音频格式")
+        if not video_format:
+            QMessageBox.warning(self, "警告", "请选择视频格式")
+            return
+            
+        if not audio_format:
+            QMessageBox.warning(self, "警告", "请选择音频格式")
+            return
+            
+        # 检查字幕选择
+        if not selected_subtitles:
+            QMessageBox.warning(self, "警告", "请至少选择一种字幕")
             return
         
         # 确认选择
