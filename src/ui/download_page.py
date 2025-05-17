@@ -485,11 +485,14 @@ class DownloadPage(QWidget):
                     self.download_button.setEnabled(False)
                     return  # 提前返回，等待转换完成
             
-            # 如果没有发生WebM转换，显示原始的成功消息
-            QMessageBox.information(self, "完成", message)
+            # 如果没有发生WebM转换，显示原始的成功消息并设置正常颜色
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("")
         elif message != "下载已取消":
-            QMessageBox.critical(self, "错误", message)
-            
+            # 显示错误消息，并设置红色
+            self.status_label.setText(f"错误: {message}")
+            self.status_label.setStyleSheet("color: red;")
+    
     def on_convert_progress(self, message):
         """处理转换进度更新"""
         self.status_label.setText(message)
@@ -515,19 +518,21 @@ class DownloadPage(QWidget):
             try:
                 if os.path.exists(webm_file):
                     os.remove(webm_file)
-                    converted_message = f"下载并转换完成，已自动删除原始WebM文件，路径: {file_path}"
+                    converted_message = "下载并转换完成"
                     logging.info(f"已自动删除原始WebM文件: {webm_file}")
                 else:
-                    converted_message = f"下载并转换完成, 路径: {file_path}"
+                    converted_message = "下载并转换完成"
             except Exception as e:
                 logging.error(f"删除原始文件失败: {e}")
-                converted_message = f"下载并转换完成, 路径: {file_path} (未能删除原始WebM文件: {str(e)})"
+                converted_message = "下载并转换完成"
             
+            # 在状态标签显示消息，并显示对话框提示
+            self.status_label.setText(converted_message)
             QMessageBox.information(self, "完成", converted_message)
         else:
-            # 转换失败但下载成功
-            QMessageBox.warning(
-                self, 
-                "转换失败", 
-                f"WebM文件转换为MP4失败，但下载已完成。\n文件路径: {file_path}\n\n错误信息: {message}"
-            ) 
+            # 转换失败显示错误对话框
+            error_message = "WebM文件转换为MP4失败，但下载已完成"
+            self.status_label.setText(error_message)
+            self.status_label.setStyleSheet("color: red;")
+            logging.error(f"转换失败: {message}，文件路径: {file_path}")
+            QMessageBox.warning(self, "转换失败", f"WebM文件转换为MP4失败，但下载已完成。\n\n错误信息: {message}") 
