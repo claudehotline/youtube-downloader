@@ -1,12 +1,14 @@
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                               QStackedWidget, QPushButton, QVBoxLayout,
-                              QStyle, QMessageBox)
+                              QStyle, QMessageBox, QApplication)
 from PySide6.QtCore import Qt, Slot
 
 from src.ui.download_page import DownloadPage
 from src.ui.settings_page import SettingsPage
 from src.ui.history_page import HistoryPage
-from src.ui.styles import get_application_style, get_navigation_button_style, get_active_navigation_button_style
+from src.ui.styles import (get_application_style, get_navigation_button_style, 
+                          get_active_navigation_button_style, get_dark_style,
+                          get_dark_navigation_button_style, get_dark_active_navigation_button_style)
 from src.threads import FetchInfoThread, DownloadThread
 from src.downloader import YtDownloader
 from src.config import UI_MIN_WIDTH, UI_MIN_HEIGHT, APP_NAME
@@ -28,8 +30,11 @@ class MainWindow(QMainWindow):
         
         self.setWindowTitle(APP_NAME)
         
+        # 从配置读取主题设置
+        self.theme = self.config_manager.get("UI", "Theme", fallback="Fusion")
+        
         # 应用全局样式表
-        self.setStyleSheet(get_application_style())
+        self.apply_theme(self.theme)
         
         # 从配置读取窗口大小
         min_width = self.config_manager.getint("UI", "MinWidth", fallback=UI_MIN_WIDTH)
@@ -312,30 +317,60 @@ class MainWindow(QMainWindow):
     
     def update_nav_button_style(self, index):
         """更新导航按钮样式"""
-        # 使用样式模块中定义的样式
-        nav_button_style = get_navigation_button_style()
-        active_style = get_active_navigation_button_style()
+        # 根据主题选择样式
+        if self.theme == "Dark":
+            nav_button_style = get_dark_navigation_button_style()
+            active_nav_button_style = get_dark_active_navigation_button_style()
+        else:
+            nav_button_style = get_navigation_button_style()
+            active_nav_button_style = get_active_navigation_button_style()
         
+        # 重置所有按钮样式
         self.download_nav_btn.setStyleSheet(nav_button_style)
         self.settings_nav_btn.setStyleSheet(nav_button_style)
         self.history_nav_btn.setStyleSheet(nav_button_style)
         
+        # 设置当前活跃页对应的按钮样式
         if index == 0:
-            self.download_nav_btn.setStyleSheet(active_style)
+            self.download_nav_btn.setStyleSheet(active_nav_button_style)
         elif index == 1:
-            self.settings_nav_btn.setStyleSheet(active_style)
+            self.settings_nav_btn.setStyleSheet(active_nav_button_style)
         elif index == 2:
-            self.history_nav_btn.setStyleSheet(active_style)
+            self.history_nav_btn.setStyleSheet(active_nav_button_style)
     
     @Slot(dict)
     def on_settings_saved(self, settings):
         """处理设置保存事件"""
+        # 如果主题已更改，则应用新主题
+        if 'theme' in settings and settings['theme'] != self.theme:
+            self.apply_theme(settings['theme'])
+        
+        # 记录日志
         self.log_message("设置已保存")
+        
         # 切换回下载页面
         self.switch_page(0)
     
     def load_settings_from_config(self):
-        """加载配置"""
+        """从配置文件加载设置"""
+        # 应用界面主题
+        theme = self.config_manager.get("UI", "Theme", fallback="Fusion")
+        if theme != self.theme:
+            self.apply_theme(theme)
+            
         # 如果设置页面已初始化，则加载设置
         if hasattr(self, 'settings_page') and self.settings_page:
-            self.settings_page.load_settings_from_config() 
+            self.settings_page.load_settings_from_config()
+    
+    def apply_theme(self, theme):
+        """应用主题样式"""
+        self.theme = theme
+        
+        if theme == "Dark":
+            self.setStyleSheet(get_dark_style())
+        else:  # 默认为Fusion主题
+            self.setStyleSheet(get_application_style())
+        
+        # 如果界面已经初始化，更新导航按钮样式
+        if hasattr(self, 'stacked_widget'):
+            self.update_nav_button_style(self.stacked_widget.currentIndex()) 

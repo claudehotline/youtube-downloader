@@ -104,6 +104,30 @@ class SettingsPage(QWidget):
         cookie_layout.addWidget(self.use_cookie_checkbox)
         cookie_layout.addLayout(browser_layout)
         
+        # UI设置组
+        ui_settings_group = QGroupBox("界面设置")
+        ui_settings_layout = QVBoxLayout(ui_settings_group)
+        
+        # 主题选择
+        theme_layout = QHBoxLayout()
+        theme_layout.setSpacing(10)
+        theme_label = QLabel("界面主题:")
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("浅色 (Fusion)", "Fusion")
+        self.theme_combo.addItem("深色 (Dark)", "Dark")
+        # 从配置中读取主题
+        theme = self.config_manager.get("UI", "Theme", fallback="Fusion")
+        index = self.theme_combo.findData(theme)
+        if index >= 0:
+            self.theme_combo.setCurrentIndex(index)
+        theme_layout.setContentsMargins(0, 5, 0, 5)
+        
+        theme_layout.addWidget(theme_label)
+        theme_layout.addWidget(self.theme_combo)
+        theme_layout.addStretch()
+        
+        ui_settings_layout.addLayout(theme_layout)
+        
         # 保存设置按钮
         save_settings_button = QPushButton("保存设置")
         save_settings_button.setObjectName("saveButton")
@@ -112,6 +136,7 @@ class SettingsPage(QWidget):
         # 添加所有设置组到页面
         layout.addWidget(download_settings_group)
         layout.addWidget(cookie_group)
+        layout.addWidget(ui_settings_group)
         layout.addWidget(save_settings_button)
         layout.addStretch()
     
@@ -144,6 +169,10 @@ class SettingsPage(QWidget):
         browser = self.browser_combo.currentData()
         self.config_manager.set("Cookies", "Browser", browser)
         
+        # 保存主题设置
+        theme = self.theme_combo.currentData()
+        self.config_manager.set("UI", "Theme", theme)
+        
         # 显示保存成功消息
         QMessageBox.information(self, "设置保存", "设置已保存")
         
@@ -153,7 +182,8 @@ class SettingsPage(QWidget):
             'threads': int(threads),
             'download_thumbnail': self.download_thumbnail_checkbox.isChecked(),
             'use_cookies': self.use_cookie_checkbox.isChecked(),
-            'browser': browser
+            'browser': browser,
+            'theme': theme
         }
         self.settings_saved.emit(settings)
     
@@ -183,4 +213,12 @@ class SettingsPage(QWidget):
         index = self.browser_combo.findData(browser)
         if index >= 0:
             self.browser_combo.setCurrentIndex(index)
-        self.browser_combo.setEnabled(use_cookies) 
+        self.browser_combo.setEnabled(use_cookies)
+        
+        # 加载主题设置
+        theme = self.config_manager.get("UI", "Theme", fallback="Fusion")
+        index = self.theme_combo.findData(theme)
+        if index >= 0:
+            self.theme_combo.setCurrentIndex(index)
+        else:
+            self.theme_combo.setCurrentText(theme) 
