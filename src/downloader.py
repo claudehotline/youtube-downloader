@@ -130,7 +130,9 @@ class YtDownloader:
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True
+                    text=True,
+                    encoding='utf-8',  # 明确指定编码
+                    errors='replace'  # 遇到无法解码的字符时替换
                 )
                 self.processes.append(process)
                 
@@ -301,6 +303,8 @@ class YtDownloader:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding='utf-8',  # 明确指定编码
+                    errors='replace',  # 遇到无法解码的字符时替换
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
                 
@@ -352,6 +356,8 @@ class YtDownloader:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding='utf-8',  # 明确指定编码
+                    errors='replace',  # 遇到无法解码的字符时替换
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
                 
@@ -413,6 +419,8 @@ class YtDownloader:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding='utf-8',  # 明确指定编码
+                errors='replace',  # 遇到无法解码的字符时替换
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 bufsize=1  # 使用行缓冲
             )
@@ -574,7 +582,9 @@ class YtDownloader:
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                encoding='utf-8',  # 明确指定编码
+                errors='replace'  # 遇到无法解码的字符时替换
             )
             self.processes.append(process)
             

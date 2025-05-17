@@ -56,6 +56,8 @@ def convert_webm_to_mp4(webm_file_path):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',  # 明确指定编码
+            errors='replace',  # 遇到无法解码的字符时替换
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
         
