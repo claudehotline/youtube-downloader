@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                          QHeaderView, QAbstractItemView, QMenu, QMessageBox,
                          QLineEdit, QToolBar, QComboBox, QSizePolicy, QSpacerItem,
                          QDialog, QDialogButtonBox, QTextEdit, QStyle)
-from PySide6.QtCore import Qt, Signal, QSize, QDateTime
+from PySide6.QtCore import Qt, Signal, QSize, QDateTime, QEvent, QTimer
 from PySide6.QtGui import QIcon, QAction
 import os
 import datetime
@@ -20,6 +20,30 @@ class DownloadHistoryPage(QWidget):
         self.db = DownloadHistoryDB()
         self.setup_ui()
         self.load_download_history()
+        
+        # 监听窗口大小变化事件
+        self.installEventFilter(self)
+    
+    def eventFilter(self, obj, event):
+        """事件过滤器，处理窗口大小变化"""
+        if obj == self and event.type() == QEvent.Type.Resize:
+            # 确保表格已初始化
+            if hasattr(self, 'history_table') and self.history_table.width() > 0:
+                self.adjust_column_widths()
+        return super().eventFilter(obj, event)
+    
+    def adjust_column_widths(self):
+        """根据窗口大小调整列宽比例"""
+        total_width = self.history_table.width() - 20  # 减去滚动条宽度
+        
+        # 设置每列的宽度比例
+        self.history_table.setColumnWidth(0, int(total_width * 0.25))  # 标题列
+        self.history_table.setColumnWidth(1, int(total_width * 0.08))  # 状态列
+        self.history_table.setColumnWidth(2, int(total_width * 0.12))  # 格式列
+        self.history_table.setColumnWidth(3, int(total_width * 0.25))  # 路径列
+        self.history_table.setColumnWidth(4, int(total_width * 0.08))  # 大小列
+        self.history_table.setColumnWidth(5, int(total_width * 0.12))  # 时间列
+        # 最后一列不需要设置，会自动伸展
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -82,13 +106,8 @@ class DownloadHistoryPage(QWidget):
         
         # 设置列宽
         header = self.history_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # 标题列自适应
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # 状态列自适应内容
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # 格式列自适应内容
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)  # 路径列自适应
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # 大小列自适应内容
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # 时间列自适应内容
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)  # 耗时列自适应内容
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)  # 默认所有列都可拖拽调整宽度
+        header.setStretchLastSection(True)  # 最后一列拉伸填充
         
         # 连接双击事件
         self.history_table.doubleClicked.connect(self.on_row_double_clicked)
@@ -101,6 +120,9 @@ class DownloadHistoryPage(QWidget):
         status_bar.addWidget(self.status_label)
         
         layout.addLayout(status_bar)
+        
+        # 窗口显示后设置初始列宽
+        QTimer.singleShot(100, self.adjust_column_widths)
     
     def load_download_history(self):
         """从数据库加载下载历史记录"""
