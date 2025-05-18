@@ -551,7 +551,7 @@ class DownloadPage(QWidget):
         """下载完成处理"""
         self.status_label.setText(message)
         self.download_button.setEnabled(True)
-        self.cancel_button.setEnabled(False)
+        self.cancel_button.setEnabled(False)  # 下载完成后停用取消按钮
         self.progress_detail_label.setText("")
         
         if success:
@@ -563,6 +563,9 @@ class DownloadPage(QWidget):
                     # 显示转换中的状态
                     self.status_label.setText("准备转换WebM为MP4格式...")
                     self.progress_bar.setValue(0)  # 重置进度条
+                    
+                    # 重新启用取消按钮，确保用户可以取消转换
+                    self.cancel_button.setEnabled(True)
                     
                     # 创建转换选项
                     convert_options = {
@@ -591,6 +594,9 @@ class DownloadPage(QWidget):
                     self.convert_thread.convert_finished.connect(self.on_convert_finished)
                     self.convert_thread.start()
                     
+                    # 确保取消按钮在转换期间保持启用状态
+                    self.cancel_button.setEnabled(True)
+                    
                     # 禁用下载按钮，直到转换完成
                     self.download_button.setEnabled(False)
                     return  # 提前返回，等待转换完成
@@ -606,12 +612,16 @@ class DownloadPage(QWidget):
     def on_convert_progress(self, message):
         """处理转换进度更新"""
         self.status_label.setText(message)
+        # 确保取消按钮始终可用
+        self.cancel_button.setEnabled(True)
         
     def on_convert_percent(self, percent):
         """处理转换百分比更新"""
         # 更新进度条
         self.progress_bar.setRange(0, 100)  # 确保范围正确
         self.progress_bar.setValue(percent)
+        # 确保取消按钮始终可用
+        self.cancel_button.setEnabled(True)
         
     def on_convert_finished(self, success, message, file_path):
         """处理转换完成"""
@@ -619,6 +629,7 @@ class DownloadPage(QWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100 if success else 0)
         self.download_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)  # 转换完成后禁用取消按钮
         
         # 如果是由取消操作导致的，显示取消信息而不是错误
         if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.is_canceled:
