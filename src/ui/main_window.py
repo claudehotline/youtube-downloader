@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
                               QStyle, QMessageBox, QApplication)
 from PySide6.QtCore import Qt, Slot
 import logging
+import os
 
 from src.ui.download_page import DownloadPage
 from src.ui.settings_page import SettingsPage
@@ -273,8 +274,57 @@ class MainWindow(QMainWindow):
         # 记录日志
         if success:
             self.log_message(f"下载完成: {message}")
+            
+            # 检查下载页面是否创建了转换线程，并连接信号
+            if hasattr(self.download_page, 'convert_thread') and self.download_page.convert_thread:
+                # 断开旧的连接，避免重复连接
+                try:
+                    self.download_page.convert_thread.convert_progress.disconnect(self.on_convert_progress)
+                except:
+                    pass
+                    
+                try:
+                    self.download_page.convert_thread.convert_percent.disconnect(self.on_convert_percent)
+                except:
+                    pass
+                    
+                try:
+                    self.download_page.convert_thread.convert_finished.disconnect(self.on_convert_finished)
+                except:
+                    pass
+                
+                # 重新连接信号
+                self.download_page.convert_thread.convert_progress.connect(self.on_convert_progress)
+                self.download_page.convert_thread.convert_percent.connect(self.on_convert_percent)
+                self.download_page.convert_thread.convert_finished.connect(self.on_convert_finished)
+                
+                # 记录视频转换开始的日志
+                self.log_message(f"开始视频格式转换: WebM → MP4")
         else:
             self.log_message(f"下载失败: {message}", error=True)
+        
+        # 重置进度记录
+        self.last_logged_percent = 0
+    
+    def on_convert_progress(self, message):
+        """处理转换进度消息"""
+        # 将转换进度消息记录到历史记录界面
+        if not message.startswith("正在转换"):  # 避免记录太多重复的百分比消息
+            self.log_message(f"转换进度: {message}")
+    
+    def on_convert_percent(self, percent):
+        """处理转换百分比更新"""
+        # 每10%记录一次进度到历史记录
+        if percent > 0 and percent % 10 == 0 and percent > self.last_logged_percent:
+            self.log_message(f"转换进度: {percent}%")
+            self.last_logged_percent = percent
+    
+    def on_convert_finished(self, success, message, file_path):
+        """处理转换完成"""
+        if success:
+            self.log_message(f"转换完成: {os.path.basename(file_path)}")
+        else:
+            self.log_message(f"转换失败: {message}", error=True)
         
         # 重置进度记录
         self.last_logged_percent = 0

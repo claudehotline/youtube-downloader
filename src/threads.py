@@ -1,5 +1,10 @@
 from PySide6.QtCore import QThread, Signal
 import os
+import logging
+import time
+import threading
+import traceback
+from src.utils.video_utils import convert_webm_to_mp4
 
 
 class FetchInfoThread(QThread):
@@ -75,54 +80,72 @@ class DownloadThread(QThread):
 
 # 添加WebM到MP4的转换线程
 class ConvertThread(QThread):
-    """处理WebM到MP4格式转换的线程"""
-    convert_progress = Signal(str)  # 转换进度信息
-    convert_finished = Signal(bool, str, str)  # 成功状态，消息，文件路径
-    convert_percent = Signal(int)  # 转换进度百分比
+    """视频转换线程"""
+    convert_finished = Signal(bool, str, str)
+    convert_progress = Signal(str)
+    convert_percent = Signal(int)
     
-    def __init__(self, webm_file_path, options=None):
-        super().__init__()
-        self.webm_file_path = webm_file_path
-        self.is_cancelled = False
-        self.options = options or {}
+    def __init__(self, file_path, options=None, parent=None):
+        super().__init__(parent)
+        self.file_path = file_path
+        self.options = options
+        self.is_canceled = False
+        self.record_id = None  # 用于存储历史记录ID
     
     def run(self):
         try:
-            from src.utils.video_utils import convert_webm_to_mp4
+            # 生成目标文件路径
+            target_file = self.file_path.replace('.webm', '.mp4')
             
-            # 发送开始转换信号
-            self.convert_progress.emit("正在准备转换WebM为MP4格式...")
+            # 不再记录转换历史
             
-            # 设置进度回调函数
-            def on_progress(percent, message):
+            # 定义进度回调函数
+            def progress_callback(percent, message):
                 self.convert_percent.emit(percent)
                 self.convert_progress.emit(message)
                 
-                # 检查是否被取消
-                if self.is_cancelled:
-                    return False  # 返回False表示需要取消
-                return True  # 返回True表示继续
+                # 不再更新历史记录中的进度
+                
+                # 检查是否取消
+                if self.is_canceled:
+                    return False
+                return True
             
             # 执行转换
-            mp4_file = convert_webm_to_mp4(
-                self.webm_file_path,
-                progress_callback=on_progress,
+            start_time = time.time()
+            output_file = convert_webm_to_mp4(
+                self.file_path, 
+                progress_callback=progress_callback,
                 options=self.options
             )
             
-            # 检查是否被取消
-            if self.is_cancelled:
-                self.convert_finished.emit(False, "转换已取消", self.webm_file_path)
-                return
-            
             # 检查转换结果
-            if mp4_file != self.webm_file_path:  # 转换成功
-                self.convert_finished.emit(True, "转换成功", mp4_file)
-            else:
-                self.convert_finished.emit(False, "转换失败", self.webm_file_path)
+            if output_file.endswith('.mp4') and os.path.exists(output_file):
+                elapsed_time = time.time() - start_time
+                success_message = f"转换完成，耗时: {elapsed_time:.2f}秒"
+                logging.info(success_message)
                 
+                # 不再更新历史记录
+                
+                self.convert_finished.emit(True, success_message, output_file)
+            else:
+                error_message = "转换失败，请检查源文件和转换设置"
+                logging.error(error_message)
+                
+                # 不再更新历史记录
+                
+                self.convert_finished.emit(False, error_message, self.file_path)
         except Exception as e:
-            self.convert_finished.emit(False, f"转换过程发生错误: {str(e)}", self.webm_file_path)
+            error_details = traceback.format_exc()
+            error_message = f"转换过程中发生异常: {str(e)}\n{error_details}"
+            logging.error(error_message)
+            
+            # 不再更新历史记录
+            
+            self.convert_finished.emit(False, str(e), self.file_path)
     
     def cancel(self):
-        self.is_cancelled = True
+        """取消转换"""
+        self.is_canceled = True
+        
+        # 不再更新历史记录

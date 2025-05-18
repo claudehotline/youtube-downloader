@@ -469,9 +469,20 @@ class DownloadPage(QWidget):
                     
                     # 创建转换选项
                     convert_options = {
-                        'preset': 'medium',  # 转换速度与质量平衡
-                        'crf': 22,           # 视频质量参数
-                        'audio_bitrate': '192k'  # 音频比特率
+                        'video_codec': 'av1_nvenc',   # 使用NVIDIA GPU加速AV1编码器
+                        'preset': 'p7',               # 最高质量预设
+                        'tune': 'hq',                 # 高质量调优
+                        'rc': 'vbr',                  # 使用可变比特率模式
+                        'cq': 20,                     # AV1的VBR质量值(0-63，值越低质量越高)
+                        'audio_bitrate': '320k',      # 音频比特率
+                        'keep_source_bitrate': True,  # 保持原视频比特率
+                        'multipass': 'qres',          # 两通道编码，第一通道使用四分之一分辨率
+                        'rc-lookahead': 32,           # 前瞻帧数，提高编码质量
+                        'spatial-aq': True,           # 空间自适应量化，提高视觉质量
+                        'temporal-aq': True,          # 时间自适应量化，提高动态场景质量
+                        'aq-strength': 8,             # AQ强度(1-15)
+                        'fallback_codecs': ['h264_nvenc', 'hevc_nvenc', 'libx264'],  # 备用编码器列表
+                        'gpu': 0                      # 固定使用GPU 0
                     }
                     
                     # 创建并启动转换线程
@@ -526,13 +537,11 @@ class DownloadPage(QWidget):
                 logging.error(f"删除原始文件失败: {e}")
                 converted_message = "下载并转换完成"
             
-            # 在状态标签显示消息，并显示对话框提示
+            # 在状态标签显示消息，不再显示对话框
             self.status_label.setText(converted_message)
-            QMessageBox.information(self, "完成", converted_message)
         else:
-            # 转换失败显示错误对话框
+            # 转换失败显示错误信息，但不再弹出对话框
             error_message = "WebM文件转换为MP4失败，但下载已完成"
             self.status_label.setText(error_message)
             self.status_label.setStyleSheet("color: red;")
-            logging.error(f"转换失败: {message}，文件路径: {file_path}")
-            QMessageBox.warning(self, "转换失败", f"WebM文件转换为MP4失败，但下载已完成。\n\n错误信息: {message}") 
+            logging.error(f"转换失败: {message}，文件路径: {file_path}") 

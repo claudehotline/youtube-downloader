@@ -72,12 +72,17 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
         webm_file_path: webm文件路径
         progress_callback: 进度回调函数，接收百分比和消息参数
         options: 转换选项字典，支持的选项包括：
-            - video_codec: 视频编码器 (默认: 'libx264')
+            - video_codec: 视频编码器 (默认: 'av1_nvenc')
             - audio_codec: 音频编码器 (默认: 'aac')
-            - preset: 编码预设 (默认: 'medium')
+            - preset: 编码预设 (默认: 'veryslow')
             - crf: 恒定质量因子 (默认: 22)
-            - audio_bitrate: 音频比特率 (默认: '128k')
+            - audio_bitrate: 音频比特率 (默认: '320k')
             - scale: 缩放尺寸，如 '1280:720'
+            - keep_source_bitrate: 是否保持原视频比特率 (默认: True)
+            - use_vbr: 是否使用可变比特率 (默认: True)
+            - min_bitrate: 最小比特率，仅在use_vbr=True时有效 (默认: None)
+            - max_bitrate: 最大比特率，仅在use_vbr=True时有效 (默认: None)
+            - buffer_size: 缓冲区大小，用于VBR (默认: None)
         
     Returns:
         转换后的mp4文件路径，如果转换失败则返回原始文件路径
@@ -90,12 +95,20 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
     
     # 合并默认选项和用户提供的选项
     default_options = {
-        'video_codec': 'libx264',
+        'video_codec': 'av1_nvenc',  # 使用NVIDIA GPU加速AV1编码器
         'audio_codec': 'aac',
-        'preset': 'medium',
-        'crf': 22,
-        'audio_bitrate': '128k',
-        'scale': None
+        'preset': 'p7',            # 使用最高质量预设
+        'cq': 20,                  # AV1的VBR模式下的质量值(0-63)
+        'audio_bitrate': '320k',
+        'scale': None,
+        'keep_source_bitrate': True,
+        'rc': 'vbr',               # 使用VBR模式
+        'multipass': 'qres',       # 两通道编码，四分之一分辨率
+        'rc-lookahead': 32,        # 前瞻帧数
+        'spatial-aq': True,        # 启用空间自适应量化
+        'temporal-aq': True,       # 启用时间自适应量化
+        'gpu': 0,                  # 默认使用GPU 0
+        'fallback_codecs': ['h264_nvenc', 'hevc_nvenc', 'libx264'],  # 备用编码器列表
     }
     
     if options:
@@ -122,10 +135,102 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
             logging.error("ffmpeg命令不可用，请确保已安装ffmpeg并添加到PATH中")
             return webm_file_path
             
+        # 检查是否支持NVIDIA编码器
+        if 'nvenc' in options['video_codec']:
+            try:
+                # 检查NVIDIA编码器是否可用
+                nvenc_check = subprocess.run(
+                    ['ffmpeg', '-encoders'], 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    timeout=5
+                )
+                
+                if options['video_codec'] not in nvenc_check.stdout:
+                    logging.warning(f"检测到NVIDIA编码器 {options['video_codec']} 不可用，将尝试使用替代编码器")
+                    
+                    # 尝试回退到备用编码器列表
+                    fallback_used = False
+                    if 'fallback_codecs' in options and options['fallback_codecs']:
+                        for codec in options['fallback_codecs']:
+                            if codec in nvenc_check.stdout:
+                                options['video_codec'] = codec
+                                logging.info(f"已切换到备用编码器: {codec}")
+                                fallback_used = True
+                                break
+                    
+                    # 如果没有在备用列表中找到可用编码器，则尝试其他NVIDIA编码器
+                    if not fallback_used:
+                        if 'h264_nvenc' in nvenc_check.stdout:
+                            options['video_codec'] = 'h264_nvenc'
+                            logging.info("已切换到 h264_nvenc 编码器")
+                        elif 'hevc_nvenc' in nvenc_check.stdout:
+                            options['video_codec'] = 'hevc_nvenc'
+                            logging.info("已切换到 hevc_nvenc 编码器")
+                        else:
+                            # 如果没有可用的NVIDIA编码器，则使用CPU编码器
+                            options['video_codec'] = 'libx264'
+                            logging.warning("未检测到可用的NVIDIA编码器，将使用CPU编码 (libx264)")
+            except Exception as e:
+                logging.error(f"检查NVIDIA编码器时出错: {e}")
+                options['video_codec'] = 'libx264'
+                logging.warning("由于检查错误，将使用CPU编码 (libx264)")
+            
         logging.info(f"开始将 {webm_file_path} 转换为 {mp4_file_path}")
+        logging.info(f"使用编码器: {options['video_codec']}")
         
         # 使用ffmpeg-python进行转换
         try:
+            # 首先获取源视频信息
+            if progress_callback:
+                progress_callback(0, "正在分析源视频信息...")
+                
+            probe = ffmpeg.probe(webm_file_path)
+            
+            # 源视频比特率、分辨率等信息
+            video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
+            audio_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'audio'), None)
+            
+            # 如果设置了保持原比特率
+            video_bitrate = None
+            audio_bitrate = None
+            
+            if options['keep_source_bitrate']:
+                # 尝试获取视频比特率
+                if video_stream:
+                    # 尝试不同的方式获取比特率
+                    if 'bit_rate' in video_stream:
+                        video_bitrate = int(video_stream['bit_rate'])
+                    elif 'tags' in video_stream and 'BPS' in video_stream['tags']:
+                        video_bitrate = int(video_stream['tags']['BPS'])
+                    elif 'bit_rate' in probe['format']:
+                        # 如果没有视频流比特率，但有总比特率，可以估算
+                        video_bitrate = int(float(probe['format']['bit_rate']) * 0.85)  # 假设视频占总比特率的85%
+                
+                # 尝试获取音频比特率
+                if audio_stream:
+                    if 'bit_rate' in audio_stream:
+                        audio_bitrate = int(audio_stream['bit_rate'])
+                    elif 'tags' in audio_stream and 'BPS' in audio_stream['tags']:
+                        audio_bitrate = int(audio_stream['tags']['BPS'])
+            
+            # 记录获取到的比特率信息
+            if video_bitrate:
+                logging.info(f"源视频比特率: {video_bitrate} bps")
+            else:
+                logging.warning("无法获取源视频比特率，将使用默认设置")
+                
+            if audio_bitrate:
+                logging.info(f"源音频比特率: {audio_bitrate} bps")
+            else:
+                logging.warning("无法获取源音频比特率，将使用默认设置")
+            
+            # 获取视频总时长用于计算进度
+            duration = float(probe['format']['duration'])
+            
             # 创建输入流
             input_stream = ffmpeg.input(webm_file_path)
             
@@ -141,10 +246,68 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
             output_args = {
                 'vcodec': options['video_codec'],
                 'preset': options['preset'],
-                'crf': options['crf'],
-                'acodec': options['audio_codec'],
-                'audio_bitrate': options['audio_bitrate']
+                'acodec': options['audio_codec']
             }
+            
+            # 设置使用的GPU
+            if 'gpu' in options and options['gpu'] is not None:
+                output_args['gpu'] = str(options['gpu'])
+                logging.info(f"使用GPU {options['gpu']} 进行编码")
+            
+            # 设置码率控制模式
+            if 'rc' in options and options['rc']:
+                output_args['rc'] = options['rc']
+                logging.info(f"使用码率控制: {options['rc']}")
+                
+                # VBR模式下，设置目标质量
+                if options['rc'] == 'vbr' and 'cq' in options:
+                    output_args['cq'] = str(options['cq'])
+                    logging.info(f"VBR质量值: {options['cq']}")
+            
+            # 设置多通道编码
+            if 'multipass' in options and options['multipass']:
+                output_args['multipass'] = options['multipass']
+                logging.info(f"多通道编码: {options['multipass']}")
+            
+            # 设置前瞻帧数
+            if 'rc-lookahead' in options and options['rc-lookahead']:
+                output_args['rc-lookahead'] = str(options['rc-lookahead'])
+                logging.info(f"前瞻帧数: {options['rc-lookahead']}")
+            
+            # 设置自适应量化
+            if 'spatial-aq' in options and options['spatial-aq']:
+                output_args['spatial-aq'] = '1'
+                logging.info("启用空间自适应量化")
+                
+            if 'temporal-aq' in options and options['temporal-aq']:
+                output_args['temporal-aq'] = '1'
+                logging.info("启用时间自适应量化")
+            
+            # 设置视频比特率限制（如果需要）
+            if video_bitrate and options['keep_source_bitrate']:
+                # 将bps转换为kbps，ffmpeg接受的格式
+                video_bitrate_k = str(int(video_bitrate / 1000)) + 'k'
+                
+                # 根据编码模式设置比特率参数
+                if options.get('rc') == 'vbr':
+                    # VBR模式设置最大比特率和缓冲区
+                    output_args['maxrate'] = video_bitrate_k
+                    output_args['bufsize'] = str(int(video_bitrate / 500)) + 'k'
+                elif options.get('rc') == 'cbr':
+                    # CBR模式设置固定比特率
+                    output_args['b:v'] = video_bitrate_k
+                    output_args['minrate'] = video_bitrate_k
+                    output_args['maxrate'] = video_bitrate_k
+                    output_args['bufsize'] = video_bitrate_k
+            
+            # 设置音频比特率
+            if audio_bitrate and options['keep_source_bitrate']:
+                # 将bps转换为kbps
+                audio_bitrate_k = str(int(audio_bitrate / 1000)) + 'k'
+                output_args['audio_bitrate'] = audio_bitrate_k
+            else:
+                # 使用默认音频比特率
+                output_args['audio_bitrate'] = options['audio_bitrate']
             
             # 创建输出流
             output_stream = ffmpeg.output(
@@ -155,12 +318,11 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
             
             # 如果需要进度回调
             if progress_callback:
-                # 首先获取视频总时长
-                probe = ffmpeg.probe(webm_file_path)
-                duration = float(probe['format']['duration'])
-                
                 # 开始执行转换，使用subprocess而不是ffmpeg.run以便捕获实时输出
                 cmd = ffmpeg.compile(output_stream, overwrite_output=True)
+                
+                # 记录完整命令
+                logging.debug(f"FFmpeg命令: {' '.join(cmd)}")
                 
                 # 创建进程，重定向输出
                 process = subprocess.Popen(
@@ -176,9 +338,13 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
                 # 创建一个线程来读取stderr并更新进度
                 def monitor_progress():
                     progress_pattern = re.compile(r'time=(\d+:\d+:\d+.\d+)')
+                    error_logs = []
                     
                     # 读取stderr以获取进度信息
                     for line in process.stderr:
+                        # 记录错误信息
+                        error_logs.append(line.strip())
+                        
                         # 搜索时间信息
                         match = progress_pattern.search(line)
                         if match:
@@ -203,8 +369,93 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
                 if process.returncode != 0:
                     # 读取错误输出
                     progress_callback(0, "转换失败")
-                    error_output = process.stderr.read()
-                    logging.error(f"FFmpeg执行失败: {error_output}")
+                    stderr_output = "\n".join([line for line in process.stderr.readlines()])
+                    logging.error(f"FFmpeg执行失败: {stderr_output}")
+                    
+                    # 如果是编码器错误，尝试使用备用编码器
+                    if ("No such filter" in stderr_output or 
+                        "Error initializing output stream" in stderr_output or 
+                        "Encoder not found" in stderr_output or
+                        "Invalid encoder type" in stderr_output or
+                        "Unrecognized option" in stderr_output):
+                        
+                        logging.warning(f"{options['video_codec']}编码器不可用或参数无效，尝试使用备用编码器...")
+                        
+                        # 尝试使用备用编码器列表
+                        fallback_found = False
+                        if 'fallback_codecs' in options and options['fallback_codecs']:
+                            for codec in options['fallback_codecs']:
+                                logging.info(f"尝试使用备用编码器: {codec}")
+                                
+                                # 创建新的输出参数
+                                if 'nvenc' in codec:
+                                    # NVIDIA编码器参数
+                                    output_args = {
+                                        'vcodec': codec,
+                                        'preset': 'p7',  # 使用最高质量预设
+                                        'rc': 'vbr',     # 使用VBR模式
+                                        'cq': '20',      # 质量值
+                                        'spatial-aq': '1',  # 空间自适应量化
+                                        'temporal-aq': '1', # 时间自适应量化
+                                        'rc-lookahead': '32', # 前瞻帧数
+                                        'acodec': options['audio_codec'],
+                                        'gpu': str(options['gpu']) if 'gpu' in options else '0'
+                                    }
+                                else:
+                                    # CPU编码器参数 (如libx264)
+                                    output_args = {
+                                        'vcodec': codec,
+                                        'preset': 'slow',  # CPU编码器的预设
+                                        'crf': '20',       # CRF质量值
+                                        'acodec': options['audio_codec']
+                                    }
+                                
+                                # 如果保持原比特率，设置相关参数
+                                if video_bitrate and options['keep_source_bitrate']:
+                                    video_bitrate_k = str(int(video_bitrate / 1000)) + 'k'
+                                    
+                                    if 'nvenc' in codec:
+                                        # NVIDIA编码器设置最大比特率
+                                        output_args['maxrate'] = video_bitrate_k
+                                        output_args['bufsize'] = str(int(video_bitrate / 500)) + 'k'
+                                    else:
+                                        # libx264等编码器设置最大比特率
+                                        output_args['maxrate'] = video_bitrate_k
+                                        output_args['bufsize'] = str(int(video_bitrate / 500)) + 'k'
+                                
+                                # 设置音频比特率
+                                if audio_bitrate and options['keep_source_bitrate']:
+                                    audio_bitrate_k = str(int(audio_bitrate / 1000)) + 'k'
+                                    output_args['audio_bitrate'] = audio_bitrate_k
+                                else:
+                                    output_args['audio_bitrate'] = options['audio_bitrate']
+                                
+                                # 创建新的输出流
+                                output_stream = ffmpeg.output(
+                                    filtered_stream, 
+                                    mp4_file_path,
+                                    **output_args
+                                )
+                                
+                                try:
+                                    # 直接使用ffmpeg.run运行命令
+                                    ffmpeg.run(output_stream, quiet=False, overwrite_output=True)
+                                    
+                                    # 检查转换是否成功
+                                    if os.path.exists(mp4_file_path) and os.path.getsize(mp4_file_path) > 0:
+                                        logging.info(f"成功使用备用编码器 {codec} 将 {webm_file_path} 转换为 {mp4_file_path}")
+                                        fallback_found = True
+                                        return mp4_file_path
+                                except ffmpeg.Error as e:
+                                    stderr = e.stderr.decode('utf-8', errors='replace') if e.stderr else "未知错误"
+                                    logging.error(f"备用编码器 {codec} 处理错误: {stderr}")
+                                    continue  # 尝试下一个编码器
+                        
+                        if not fallback_found:
+                            if progress_callback:
+                                progress_callback(0, "所有编码器都失败，无法转换视频")
+                            logging.error("所有编码器都失败，无法转换视频")
+                    
                     return webm_file_path
                 
                 # 完成时通知
