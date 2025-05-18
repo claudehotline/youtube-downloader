@@ -38,12 +38,12 @@ class DownloadHistoryPage(QWidget):
         
         # 设置每列的宽度比例
         self.history_table.setColumnWidth(0, int(total_width * 0.25))  # 标题列
-        self.history_table.setColumnWidth(1, int(total_width * 0.08))  # 状态列
-        self.history_table.setColumnWidth(2, int(total_width * 0.12))  # 格式列
-        self.history_table.setColumnWidth(3, int(total_width * 0.25))  # 路径列
-        self.history_table.setColumnWidth(4, int(total_width * 0.08))  # 大小列
-        self.history_table.setColumnWidth(5, int(total_width * 0.12))  # 时间列
-        # 最后一列不需要设置，会自动伸展
+        self.history_table.setColumnWidth(1, int(total_width * 0.12))  # 格式列
+        self.history_table.setColumnWidth(2, int(total_width * 0.25))  # 路径列
+        self.history_table.setColumnWidth(3, int(total_width * 0.08))  # 大小列
+        self.history_table.setColumnWidth(4, int(total_width * 0.12))  # 时间列
+        self.history_table.setColumnWidth(5, int(total_width * 0.08))  # 耗时列
+        # 最后一列(状态)不需要设置，会自动伸展
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -101,7 +101,7 @@ class DownloadHistoryPage(QWidget):
         # 设置列
         self.history_table.setColumnCount(7)
         self.history_table.setHorizontalHeaderLabels([
-            "视频标题", "状态", "格式", "输出路径", "大小", "下载时间", "耗时"
+            "视频标题", "格式", "输出路径", "大小", "下载时间", "耗时", "状态"
         ])
         
         # 设置列宽
@@ -154,6 +154,47 @@ class DownloadHistoryPage(QWidget):
             title_item.setData(Qt.ItemDataRole.UserRole, record['id'])  # 存储记录ID
             self.history_table.setItem(i, 0, title_item)
             
+            # 格式
+            format_str = ""
+            if record['video_format']:
+                format_str += f"视频:{record['video_format']}"
+            if record['audio_format']:
+                if format_str:
+                    format_str += " + "
+                format_str += f"音频:{record['audio_format']}"
+            self.history_table.setItem(i, 1, QTableWidgetItem(format_str))
+            
+            # 输出路径
+            output_path = record['output_path'] or "未知"
+            self.history_table.setItem(i, 2, QTableWidgetItem(output_path))
+            
+            # 文件大小
+            file_size = record['file_size'] or 0
+            size_str = self.format_size(file_size) if file_size > 0 else "未知"
+            self.history_table.setItem(i, 3, QTableWidgetItem(size_str))
+            
+            # 下载时间
+            start_time = record['start_time']
+            if start_time:
+                dt = datetime.datetime.fromtimestamp(start_time)
+                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                time_str = "未知"
+            self.history_table.setItem(i, 4, QTableWidgetItem(time_str))
+            
+            # 耗时
+            duration = record['duration']
+            if duration and duration > 0:
+                duration_str = self.format_duration(duration)
+            else:
+                if record['status'] == '进行中':
+                    duration_str = "进行中..."
+                elif record['status'] == '已取消':
+                    duration_str = "--"
+                else:
+                    duration_str = "未知"
+            self.history_table.setItem(i, 5, QTableWidgetItem(duration_str))
+            
             # 状态
             status = record['status']
             status_item = QTableWidgetItem(status)
@@ -165,43 +206,7 @@ class DownloadHistoryPage(QWidget):
                 status_item.setForeground(Qt.GlobalColor.darkGray)
             else:
                 status_item.setForeground(Qt.GlobalColor.blue)
-            self.history_table.setItem(i, 1, status_item)
-            
-            # 格式
-            format_str = ""
-            if record['video_format']:
-                format_str += f"视频:{record['video_format']}"
-            if record['audio_format']:
-                if format_str:
-                    format_str += " + "
-                format_str += f"音频:{record['audio_format']}"
-            self.history_table.setItem(i, 2, QTableWidgetItem(format_str))
-            
-            # 输出路径
-            output_path = record['output_path'] or "未知"
-            self.history_table.setItem(i, 3, QTableWidgetItem(output_path))
-            
-            # 文件大小
-            file_size = record['file_size'] or 0
-            size_str = self.format_size(file_size) if file_size > 0 else "未知"
-            self.history_table.setItem(i, 4, QTableWidgetItem(size_str))
-            
-            # 下载时间
-            start_time = record['start_time']
-            if start_time:
-                dt = datetime.datetime.fromtimestamp(start_time)
-                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                time_str = "未知"
-            self.history_table.setItem(i, 5, QTableWidgetItem(time_str))
-            
-            # 耗时
-            duration = record['duration']
-            if duration:
-                duration_str = self.format_duration(duration)
-            else:
-                duration_str = "未知"
-            self.history_table.setItem(i, 6, QTableWidgetItem(duration_str))
+            self.history_table.setItem(i, 6, status_item)
         
         # 更新统计信息
         self.update_status_bar()
