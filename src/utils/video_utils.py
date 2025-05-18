@@ -123,6 +123,37 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
             progress_callback(0, "输入文件不存在", None)
         return input_file
     
+    # 明确声明一个全局标志来跟踪是否取消转换，避免不同函数间的状态同步问题
+    global_cancel_requested = False
+    
+    # 创建一个共享的进程引用
+    ffmpeg_process = {'process': None}
+        
+    # 自定义回调处理器函数
+    def handle_callback(percent, message, proc=None):
+        nonlocal global_cancel_requested
+        
+        # 如果提供了进程，更新共享引用
+        if proc:
+            ffmpeg_process['process'] = proc
+            
+        # 调用原始回调并获取结果
+        if progress_callback:
+            result = progress_callback(percent, message, proc)
+            # 如果回调返回False，表示请求取消
+            if result is False:
+                logger.info("收到来自UI的取消请求")
+                global_cancel_requested = True
+                # 立即尝试终止进程
+                if ffmpeg_process['process'] and ffmpeg_process['process'].poll() is None:
+                    try:
+                        logger.info(f"正在终止ffmpeg进程 PID:{ffmpeg_process['process'].pid}")
+                        terminate_process(ffmpeg_process['process'])
+                    except Exception as e:
+                        logger.error(f"终止ffmpeg进程失败: {str(e)}")
+                return False
+        return True
+
     try:
         # 使用ffmpeg-python获取视频信息
         try:
@@ -185,7 +216,7 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                 except (ValueError, TypeError):
                     duration = 0
             
-            # 时长为0时，设置一个默认值
+            # 如果时长为0时，设置一个默认值
             if duration <= 0:
                 duration = 300.0  # 默认假设视频有5分钟
                 logger.warning(f"无法获取视频时长，使用默认值 {duration}秒")
@@ -210,7 +241,7 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
             
             # 通知开始转换
             if progress_callback:
-                progress_callback(0, "开始转换...", None)
+                handle_callback(0, "开始转换...", None)
                 
         except Exception as e:
             logger.error(f"分析视频信息时出错: {safe_str(e)}")
@@ -400,30 +431,8 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                                         # 仅在进度有变化时才更新
                                         if percent != last_percent:
                                             last_percent = percent
-                                            # 立即传递进程引用
-                                            if current_process and progress_callback:
-                                                should_continue = progress_callback(percent, f"转换中: {percent}%", current_process)
-                                                if should_continue is False:
-                                                    logger.info("收到取消请求，设置终止标志")
-                                                    terminate_requested = True
-                                                    # 终止进程
-                                                    if current_process and current_process.poll() is None:
-                                                        try:
-                                                            logger.info(f"终止ffmpeg进程 PID:{current_process.pid}")
-                                                            if os.name == 'nt':
-                                                                # 使用taskkill强制终止进程树
-                                                                subprocess.call(['taskkill', '/F', '/T', '/PID', str(current_process.pid)],
-                                                                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                                                            else:
-                                                                current_process.terminate()
-                                                                time.sleep(0.5)
-                                                                if current_process.poll() is None:
-                                                                    current_process.kill()
-                                                            logger.info("ffmpeg进程已终止")
-                                                            return
-                                                        except Exception as e:
-                                                            logger.error(f"终止进程时出错: {safe_str(e)}")
-                                                        return
+                                            # 立即传递进程引用和进度
+                                            handle_callback(percent, f"转换中: {percent}%", current_process)
                     except Exception as e:
                         logger.error(f"监控进度时出错: {safe_str(e)}")
                         logger.error(traceback.format_exc())
@@ -472,22 +481,15 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                 # 添加一个检查取消的线程
                 def check_cancellation():
                     while process and process.poll() is None:
-                        if terminate_requested:
+                        if global_cancel_requested or terminate_requested:
                             logger.info("检测到终止请求，正在强制终止ffmpeg进程")
                             try:
-                                if os.name == 'nt':
-                                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(process.pid)],
-                                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                                else:
-                                    process.terminate()
-                                    time.sleep(0.5)
-                                    if process.poll() is None:
-                                        process.kill()
+                                terminate_process(process)
                                 logger.info("ffmpeg进程已被强制终止")
                                 break
                             except Exception as e:
                                 logger.error(f"终止进程失败: {safe_str(e)}")
-                        time.sleep(0.5)
+                        time.sleep(0.3)
                 
                 cancel_checker = threading.Thread(target=check_cancellation)
                 cancel_checker.daemon = True
@@ -496,14 +498,16 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                 # 等待进程完成
                 return_code = process.wait()
                 
-                # 给线程一点时间完成写入
-                time.sleep(0.5)
+                # 如果请求取消，直接返回原始文件
+                if global_cancel_requested or terminate_requested:
+                    logger.info("转换过程被用户取消")
+                    return input_file
                     
                 # 检查输出文件
                 if return_code == 0 and os.path.exists(output_file) and os.path.getsize(output_file) > 0:
                     logger.info(f"转换成功: {output_file}")
                     if progress_callback:
-                        progress_callback(100, "转换完成", process)
+                        handle_callback(100, "转换完成", process)
                     return output_file
                 else:
                     logger.error(f"转换失败，返回代码: {return_code}")
@@ -519,7 +523,7 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                     logger.error(f"ffmpeg错误: {stderr_text}")
                     
                     if progress_callback:
-                        progress_callback(0, "转换失败", process)
+                        handle_callback(0, "转换失败", process)
                     
                     # 如果主要编码器失败，尝试备用编码器
                     if video_codec != 'libx264':
@@ -543,7 +547,7 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                 logger.error(f"ffmpeg错误: {stderr}")
                 
                 if progress_callback:
-                    progress_callback(0, "转换失败", process)
+                    handle_callback(0, "转换失败", process)
                 
                 # 如果主要编码器失败，尝试备用编码器
                 if video_codec != 'libx264':
@@ -660,3 +664,52 @@ def select_best_encoder(encoders: Dict[str, bool]) -> str:
     
     # 如果没有可用的编码器，默认返回libx264
     return 'libx264'
+
+def terminate_process(process):
+    """
+    强制终止进程的通用方法
+    """
+    if not process or process.poll() is not None:
+        return
+
+    try:
+        pid = process.pid
+        logger.info(f"终止进程 PID:{pid}")
+        
+        if os.name == 'nt':
+            # Windows系统使用taskkill命令，强制终止进程及其子进程
+            subprocess.call(
+                ['taskkill', '/F', '/T', '/PID', str(pid)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            # 如果进程仍在运行，使用更强的方法
+            if process.poll() is None:
+                time.sleep(0.5)
+                os.system(f'TASKKILL /F /PID {pid} /T')
+        else:
+            # Unix系统先尝试正常终止
+            process.terminate()
+            time.sleep(0.3)
+            
+            # 如果进程仍在运行，使用SIGKILL信号强制终止
+            if process.poll() is None:
+                process.kill()
+                time.sleep(0.2)
+                
+                # 如果仍然没有终止，尝试使用系统kill命令
+                if process.poll() is None:
+                    os.system(f'kill -9 {pid}')
+                    
+        # 确认进程已终止
+        time.sleep(0.2)
+        if process.poll() is None:
+            logger.warning(f"进程 {pid} 可能仍在运行")
+        else:
+            logger.info(f"进程 {pid} 已成功终止")
+            
+    except Exception as e:
+        logger.error(f"终止进程 {process.pid} 时出错: {str(e)}")
+        logger.error(traceback.format_exc())

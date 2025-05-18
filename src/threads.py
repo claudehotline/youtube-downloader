@@ -92,17 +92,21 @@ class ConvertThread(QThread):
         self.options = options
         self.is_canceled = False
         self.process = None  # 存储ffmpeg进程引用
-        self.record_id = None  # 用于存储历史记录ID
+        self.cancel_lock = threading.Lock()  # 添加锁以避免竞态条件
     
     def run(self):
         try:
             # 生成目标文件路径
             target_file = self.file_path.replace('.webm', '.mp4')
             
-            # 不再记录转换历史
-            
             # 定义进度回调函数
             def progress_callback(percent, message, process_ref=None):
+                # 先检查是否已经取消
+                with self.cancel_lock:
+                    if self.is_canceled:
+                        logging.info("已检测到取消标志，停止转换过程")
+                        return False
+                
                 # 存储进程引用
                 if process_ref and not self.process:
                     self.process = process_ref
@@ -110,13 +114,11 @@ class ConvertThread(QThread):
                 self.convert_percent.emit(percent)
                 self.convert_progress.emit(message)
                 
-                # 不再更新历史记录中的进度
-                
-                # 检查是否取消
-                if self.is_canceled:
-                    # 如果被取消，返回False来通知convert_webm_to_mp4函数停止处理
-                    logging.info("检测到取消请求，正在终止视频转换")
-                    return False
+                # 再次检查取消状态
+                with self.cancel_lock:
+                    if self.is_canceled:
+                        logging.info("检测到取消请求，正在终止视频转换")
+                        return False
                 return True
             
             # 执行转换
@@ -128,9 +130,10 @@ class ConvertThread(QThread):
             )
             
             # 如果已取消，直接返回取消信息
-            if self.is_canceled:
-                self.convert_finished.emit(False, "用户取消了转换", self.file_path)
-                return
+            with self.cancel_lock:
+                if self.is_canceled:
+                    self.convert_finished.emit(False, "用户取消了转换", self.file_path)
+                    return
             
             # 检查转换结果
             if output_file.endswith('.mp4') and os.path.exists(output_file):
@@ -138,35 +141,36 @@ class ConvertThread(QThread):
                 success_message = f"转换完成，耗时: {elapsed_time:.2f}秒"
                 logging.info(success_message)
                 
-                # 不再更新历史记录
-                
                 self.convert_finished.emit(True, success_message, output_file)
             else:
                 error_message = f"转换失败，请检查源文件和转换设置，文件路径: {self.file_path}"
                 logging.error(error_message)
                 
-                # 不再更新历史记录
-                
                 self.convert_finished.emit(False, error_message, self.file_path)
         except Exception as e:
             # 如果已取消，直接返回取消信息而不是错误
-            if self.is_canceled:
-                self.convert_finished.emit(False, "用户取消了转换", self.file_path)
-                return
+            with self.cancel_lock:
+                if self.is_canceled:
+                    self.convert_finished.emit(False, "用户取消了转换", self.file_path)
+                    return
                 
             error_details = traceback.format_exc()
             error_message = f"转换失败: {str(e)}，文件路径: {self.file_path}"
             logging.error(error_message)
             logging.error(error_details)
             
-            # 不再更新历史记录
-            
             self.convert_finished.emit(False, error_message, self.file_path)
     
     def cancel(self):
         """取消转换"""
         logging.info(f"请求取消视频转换: {self.file_path}")
-        self.is_canceled = True
+        
+        # 使用锁保护取消操作
+        with self.cancel_lock:
+            self.is_canceled = True
+            
+            # 立即向UI发送取消通知
+            self.convert_progress.emit("正在取消转换...")
         
         # 直接终止任何运行中的ffmpeg进程
         if self.process and self.process.poll() is None:
@@ -212,4 +216,5 @@ class ConvertThread(QThread):
             except Exception as e:
                 logging.error(f"终止进程时出错: {str(e)}")
         
-        # 不再更新历史记录
+        # 发送取消结果通知
+        self.convert_finished.emit(False, "转换已取消", self.file_path)
