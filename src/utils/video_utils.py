@@ -344,13 +344,12 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
             if progress_callback:
                 # 创建一个进程终止标志
                 terminate_requested = False
+                # 创建一个共享的进程引用变量
+                process_ref = {'process': None}
                 
                 def monitor_progress():
                     # 获取外部作用域的变量
                     nonlocal terminate_requested
-                    
-                    # 这里要等待process变量创建后再引用它
-                    current_process = None
                     
                     # 等待一小段时间，确保日志文件已经创建
                     time.sleep(0.5)
@@ -367,12 +366,9 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                                     logger.info("检测到终止标志，停止监控进度")
                                     break
                                     
-                                # 尝试更新current_process引用
-                                if current_process is None and 'process' in locals():
-                                    current_process = process
-                                elif current_process is None and 'process' in globals():
-                                    current_process = globals()['process']
-                                    
+                                # 从共享变量获取进程引用
+                                current_process = process_ref['process']
+                                
                                 # 获取文件当前位置
                                 where = f.tell()
                                 
@@ -417,7 +413,7 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                                                             if os.name == 'nt':
                                                                 # 使用taskkill强制终止进程树
                                                                 subprocess.call(['taskkill', '/F', '/T', '/PID', str(current_process.pid)],
-                                                                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                                                                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                                                             else:
                                                                 current_process.terminate()
                                                                 time.sleep(0.5)
@@ -461,6 +457,10 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                     errors='replace',
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 )
+                
+                # 更新进程引用
+                if progress_callback:
+                    process_ref['process'] = process
                 
                 # 读取stderr进行日志捕获
                 log_handler = threading.Thread(
