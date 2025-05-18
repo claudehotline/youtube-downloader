@@ -16,7 +16,7 @@ from src.ui.styles import (get_application_style, get_navigation_button_style,
                           get_light_theme_active_navigation_button_style,
                           get_chrome_dark_style, get_chrome_dark_navigation_button_style,
                           get_chrome_dark_active_navigation_button_style)
-from src.threads import FetchInfoThread, DownloadThread
+from src.threads import FetchInfoThread, DownloadThread, ConvertThread
 from src.downloader import YtDownloader
 from src.config import UI_MIN_WIDTH, UI_MIN_HEIGHT, APP_NAME, TEMP_DIR, DOWNLOADS_DIR
 from src.config_manager import ConfigManager
@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
         self.download_history_page.clear_all_requested.connect(self.on_clear_all_history)
         self.download_history_page.redownload_requested.connect(self.on_redownload_requested)
         self.download_history_page.continue_download_requested.connect(self.on_continue_download_requested)
+        self.download_history_page.continue_conversion_requested.connect(self.on_continue_conversion_requested)
         
         # 将页面添加到堆叠部件
         self.stacked_widget.addWidget(self.download_page)  # 索引0 - 下载页面
@@ -207,8 +208,11 @@ class MainWindow(QMainWindow):
         
         # 记录日志
         self.log_message(f"获取视频信息失败: {error_message}", error=True)
+        
+        # 刷新下载历史列表
+        self.refresh_download_history()
     
-    def start_download(self, url, video_format, audio_format, subtitles, output_dir, threads, use_cookies, browser):
+    def start_download(self, url, video_format, audio_format, subtitles, output_dir, threads, use_cookies, browser, resume=False):
         """开始下载视频"""
         if not url:
             QMessageBox.warning(self, "警告", "请输入有效的YouTube视频URL")
@@ -238,7 +242,10 @@ class MainWindow(QMainWindow):
         # 日志记录
         format_text = f"视频格式: {video_format if video_format else '无'}, 音频格式: {audio_format if audio_format else '无'}"
         subtitle_text = f"字幕: {','.join(subtitles) if subtitles else '无'}"
-        self.log_message(f"开始下载 - {format_text}, {subtitle_text}")
+        if resume:
+            self.log_message(f"继续下载 - {format_text}, {subtitle_text}")
+        else:
+            self.log_message(f"开始下载 - {format_text}, {subtitle_text}")
         if use_cookies:
             self.log_message(f"使用{browser}浏览器的cookies")
         
@@ -257,7 +264,8 @@ class MainWindow(QMainWindow):
             threads,
             use_cookies,
             browser,
-            video_info  # 传递视频信息
+            video_info,  # 传递视频信息
+            resume  # 传递断点续传参数
         )
         
         self.download_thread.progress_updated.connect(self.update_progress)
@@ -273,6 +281,9 @@ class MainWindow(QMainWindow):
             self.log_message("用户取消下载")
             # 重置进度记录
             self.last_logged_percent = 0
+            
+            # 延迟刷新下载历史列表，确保取消操作已完成
+            QTimer.singleShot(500, self.refresh_download_history)
     
     @Slot(int, str)
     def update_progress(self, percent, message):
@@ -329,6 +340,10 @@ class MainWindow(QMainWindow):
         
         # 重置进度记录
         self.last_logged_percent = 0
+        
+        # 刷新下载历史列表
+        if hasattr(self, 'download_history_page'):
+            self.download_history_page.load_download_history()
     
     def on_convert_progress(self, message):
         """处理转换进度消息"""
@@ -346,8 +361,11 @@ class MainWindow(QMainWindow):
     def on_convert_finished(self, success, message, file_path):
         """处理转换完成"""
         if success:
+            # 成功完成转换，记录MP4文件路径
             self.log_message(f"转换完成: {os.path.basename(file_path)}")
+            self.log_message(f"MP4文件已保存: {file_path}")
         else:
+            # 转换失败，标记为转换中断
             self.log_message(f"转换失败: {message}", error=True)
         
         # 确保信号断开操作在完全完成后执行
@@ -359,6 +377,10 @@ class MainWindow(QMainWindow):
         
         # 重置进度记录
         self.last_logged_percent = 0
+        
+        # 刷新下载历史列表
+        if hasattr(self, 'download_history_page'):
+            self.download_history_page.load_download_history()
     
     def disconnect_convert_signals(self):
         """安全断开转换线程的信号连接"""
@@ -570,6 +592,11 @@ class MainWindow(QMainWindow):
         # 设置URL并获取视频信息
         self.download_page.url_input.setText(record['url'])
         
+        # 提取记录中的输出路径
+        output_path = record.get('output_path')
+        if output_path:
+            self.log_message(f"将继续下载到: {output_path}")
+        
         # 设置预设格式
         self.download_page.set_preset_formats(
             video_format=record['video_format'],
@@ -579,3 +606,93 @@ class MainWindow(QMainWindow):
         
         # 触发获取视频信息的流程
         self.fetch_video_info(record['url'], False, None)
+
+    @Slot(dict)
+    def on_continue_conversion_requested(self, record):
+        """处理继续转换请求"""
+        # 记录日志
+        self.log_message(f"继续转换: {record['title']}")
+        
+        # 获取文件路径
+        file_path = record['output_path']
+        if not file_path:
+            self.log_message(f"错误: 找不到文件路径信息", error=True)
+            QMessageBox.warning(self, "错误", "记录中没有文件路径信息，无法继续转换")
+            return
+        
+        # 确保路径是.webm文件路径
+        webm_file = file_path
+        if file_path.endswith('.mp4'):
+            webm_file = file_path.replace('.mp4', '.webm')
+            self.log_message(f"文件路径调整: {file_path} -> {webm_file}")
+        
+        # 检查文件是否存在    
+        if not webm_file.endswith('.webm') or not os.path.exists(webm_file):
+            self.log_message(f"警告: WebM文件不存在: {webm_file}", error=True)
+            reply = QMessageBox.question(
+                self, 
+                "文件不存在", 
+                f"WebM文件不存在: {webm_file}\n您需要先重新下载视频。是否现在重新下载？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # 重新下载视频
+                self.on_redownload_requested(record)
+            return
+            
+        # 切换到下载页面
+        self.switch_page(0)
+        
+        # 创建转换选项
+        convert_options = {
+            'video_codec': 'av1_nvenc',   # 使用NVIDIA GPU加速AV1编码器
+            'preset': 'p7',               # 最高质量预设
+            'tune': 'uhq',                # 超高质量调优
+            'rc': 'vbr',                  # 使用可变比特率模式
+            'cq': 20,                     # AV1的VBR质量值(0-63，值越低质量越高)
+            'audio_bitrate': '320k',      # 音频比特率
+            'keep_source_bitrate': True,  # 保持原视频比特率
+            'multipass': 'qres',          # 两通道编码，第一通道使用四分之一分辨率
+            'rc-lookahead': 32,           # 前瞻帧数，提高编码质量
+            'spatial-aq': True,           # 空间自适应量化，提高视觉质量
+            'temporal-aq': True,          # 时间自适应量化，提高动态场景质量
+            'aq-strength': 8,             # AQ强度(1-15)
+            'tf_level': 0,                # 时间滤波级别
+            'lookahead_level': 3,         # 前瞻级别
+            'fallback_codecs': ['h264_nvenc', 'hevc_nvenc', 'libx264'],  # 备用编码器列表
+            'gpu': 0                     # 固定使用GPU 0
+        }
+        
+        # 设置下载页面的状态
+        self.download_page.status_label.setText("准备转换WebM为MP4格式...")
+        self.download_page.progress_bar.setValue(0)  # 重置进度条
+        self.download_page.cancel_button.setEnabled(True)
+        self.download_page.download_button.setEnabled(False)
+        
+        # 获取记录ID
+        record_id = record.get('id')
+        if record_id:
+            self.log_message(f"使用记录ID {record_id} 进行转换追踪")
+        
+        # 从表格创建和启动转换线程
+        self.download_page.convert_thread = ConvertThread(webm_file, options=convert_options, record_id=record_id)
+        self.download_page.convert_thread.convert_progress.connect(self.download_page.on_convert_progress)
+        self.download_page.convert_thread.convert_percent.connect(self.download_page.on_convert_percent)
+        self.download_page.convert_thread.convert_finished.connect(self.download_page.on_convert_finished)
+        
+        # 连接主窗口的信号处理
+        self.download_page.convert_thread.convert_progress.connect(self.on_convert_progress)
+        self.download_page.convert_thread.convert_percent.connect(self.on_convert_percent)
+        self.download_page.convert_thread.convert_finished.connect(self.on_convert_finished)
+        
+        # 记录日志
+        self.log_message(f"开始视频格式转换: WebM → MP4")
+        
+        # 启动转换线程
+        self.download_page.convert_thread.start()
+
+    def refresh_download_history(self):
+        """刷新下载历史列表"""
+        if hasattr(self, 'download_history_page'):
+            self.download_history_page.load_download_history()

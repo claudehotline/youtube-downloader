@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                          QHeaderView, QAbstractItemView, QMenu, QMessageBox,
                          QLineEdit, QToolBar, QComboBox, QSizePolicy, QSpacerItem,
                          QDialog, QDialogButtonBox, QTextEdit, QStyle)
-from PySide6.QtCore import Qt, Signal, QSize, QDateTime, QEvent, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QDateTime, QEvent, QTimer, QItemSelectionModel
 from PySide6.QtGui import QIcon, QAction
 import os
 import datetime
@@ -16,6 +16,7 @@ class DownloadHistoryPage(QWidget):
     clear_all_requested = Signal()
     redownload_requested = Signal(dict)  # 发送下载记录信息
     continue_download_requested = Signal(dict)  # 发送下载记录信息
+    continue_conversion_requested = Signal(dict)  # 发送下载记录信息，用于继续转换
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -25,6 +26,11 @@ class DownloadHistoryPage(QWidget):
         
         # 监听窗口大小变化事件
         self.installEventFilter(self)
+        
+        # 添加自动刷新定时器
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.load_download_history)
+        self.refresh_timer.start(10000)  # 每10秒刷新一次
     
     def eventFilter(self, obj, event):
         """事件过滤器，处理窗口大小变化"""
@@ -72,6 +78,7 @@ class DownloadHistoryPage(QWidget):
         self.status_filter.addItem("进行中", "进行中")
         self.status_filter.addItem("失败", "失败")
         self.status_filter.addItem("已取消", "已取消")
+        self.status_filter.addItem("转换中断", "转换中断")
         self.status_filter.currentIndexChanged.connect(self.on_filter_changed)
         
         # 刷新按钮
@@ -128,6 +135,17 @@ class DownloadHistoryPage(QWidget):
     
     def load_download_history(self):
         """从数据库加载下载历史记录"""
+        # 保存当前滚动位置
+        current_scroll_position = self.history_table.verticalScrollBar().value() if self.history_table.rowCount() > 0 else 0
+        
+        # 保存当前选中的行ID
+        selected_ids = []
+        for index in self.history_table.selectionModel().selectedRows():
+            row = index.row()
+            item = self.history_table.item(row, 0)
+            if item:
+                selected_ids.append(item.data(Qt.ItemDataRole.UserRole))
+        
         # 清空表格
         self.history_table.setRowCount(0)
         
@@ -150,11 +168,17 @@ class DownloadHistoryPage(QWidget):
         # 填充表格
         self.history_table.setRowCount(len(records))
         
+        # 记录新行与ID的映射
+        row_id_map = {}
+        
         for i, record in enumerate(records):
             # 视频标题
             title_item = QTableWidgetItem(record['title'])
             title_item.setData(Qt.ItemDataRole.UserRole, record['id'])  # 存储记录ID
             self.history_table.setItem(i, 0, title_item)
+            
+            # 记录行号与ID的映射
+            row_id_map[record['id']] = i
             
             # 格式
             format_str = ""
@@ -193,6 +217,8 @@ class DownloadHistoryPage(QWidget):
                     duration_str = "进行中..."
                 elif record['status'] == '已取消':
                     duration_str = "--"
+                elif record['status'] == '转换中断':
+                    duration_str = "中断"
                 else:
                     duration_str = "未知"
             self.history_table.setItem(i, 5, QTableWidgetItem(duration_str))
@@ -206,9 +232,23 @@ class DownloadHistoryPage(QWidget):
                 status_item.setForeground(Qt.GlobalColor.red)
             elif status == '已取消':
                 status_item.setForeground(Qt.GlobalColor.darkGray)
+            elif status == '转换中断':
+                status_item.setForeground(Qt.GlobalColor.darkYellow)
             else:
                 status_item.setForeground(Qt.GlobalColor.blue)
             self.history_table.setItem(i, 6, status_item)
+        
+        # 恢复选中项
+        if selected_ids:
+            selection_model = self.history_table.selectionModel()
+            for record_id in selected_ids:
+                if record_id in row_id_map:
+                    row = row_id_map[record_id]
+                    index = self.history_table.model().index(row, 0)
+                    selection_model.select(index, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+        
+        # 恢复滚动位置
+        self.history_table.verticalScrollBar().setValue(current_scroll_position)
         
         # 更新统计信息
         self.update_status_bar()
@@ -221,6 +261,7 @@ class DownloadHistoryPage(QWidget):
                       f"成功: {stats['completed']} | "
                       f"失败: {stats['failed']} | "
                       f"已取消: {stats['cancelled']} | "
+                      f"转换中断: {stats['conversion_interrupted']} | "
                       f"总大小: {self.format_size(stats['total_size'])}")
         
         self.status_label.setText(status_text)
@@ -281,10 +322,26 @@ class DownloadHistoryPage(QWidget):
             redownload_action = QAction("重新下载", self)
             redownload_action.triggered.connect(lambda: self.on_redownload_triggered(record))
             menu.addAction(redownload_action)
+            
+            # 如果是已完成状态且输出路径是.webm文件，添加"转换为MP4"选项
+            if record['output_path'] and record['output_path'].endswith('.webm') and os.path.exists(record['output_path']):
+                convert_action = QAction("转换为MP4", self)
+                convert_action.triggered.connect(lambda: self.on_continue_conversion_triggered(record))
+                menu.addAction(convert_action)
         elif record['status'] in ['失败', '已取消']:
             continue_action = QAction("继续下载", self)
             continue_action.triggered.connect(lambda: self.on_continue_download_triggered(record))
             menu.addAction(continue_action)
+        elif record['status'] == '转换中断':
+            # 对于转换中断的记录，添加"重新下载"和"转换为MP4"选项
+            redownload_action = QAction("重新下载", self)
+            redownload_action.triggered.connect(lambda: self.on_redownload_triggered(record))
+            menu.addAction(redownload_action)
+            
+            # 添加"转换为MP4"选项，不再检查文件路径是否存在
+            convert_action = QAction("转换为MP4", self)
+            convert_action.triggered.connect(lambda: self.on_continue_conversion_triggered(record))
+            menu.addAction(convert_action)
         
         # 添加动作到菜单
         menu.addAction(view_action)
@@ -466,4 +523,61 @@ class DownloadHistoryPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             # 发送信号，传递记录信息
             self.continue_download_requested.emit(record)
-            # 主窗口会处理信号并切换页面 
+            # 主窗口会处理信号并切换页面
+    
+    def on_continue_conversion_triggered(self, record):
+        """处理继续转换请求"""
+        # 获取文件路径
+        file_path = record['output_path']
+        
+        if not file_path:
+            QMessageBox.warning(
+                self, "无法转换", 
+                "找不到文件路径信息。"
+            )
+            return
+        
+        # 确保路径是.webm文件路径
+        webm_path = file_path
+        if file_path.endswith('.mp4'):
+            # 如果是.mp4文件路径，转换为.webm文件路径
+            webm_path = file_path.replace('.mp4', '.webm')
+            self.log_message = f"文件路径调整: {file_path} -> {webm_path}"
+        
+        # 检查.webm文件是否存在
+        if not webm_path.endswith('.webm') or not os.path.exists(webm_path):
+            reply = QMessageBox.question(
+                self, "文件不存在", 
+                f"WebM文件不存在: {webm_path}\n您可能需要先重新下载视频。是否继续尝试转换？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+        
+        reply = QMessageBox.question(
+            self, "确认转换", 
+            f"确定要将【{record['title']}】从WebM转换为MP4格式吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # 发送信号，传递记录信息，但确保文件路径是.webm
+            record_copy = record.copy()
+            record_copy['output_path'] = webm_path
+            self.continue_conversion_requested.emit(record_copy)
+    
+    def showEvent(self, event):
+        """页面显示时触发"""
+        super().showEvent(event)
+        # 当页面显示时立即刷新一次
+        self.load_download_history()
+        # 启动定时器
+        if hasattr(self, 'refresh_timer') and not self.refresh_timer.isActive():
+            self.refresh_timer.start()
+    
+    def hideEvent(self, event):
+        """页面隐藏时触发"""
+        super().hideEvent(event)
+        # 当页面隐藏时停止定时器，节省资源
+        if hasattr(self, 'refresh_timer') and self.refresh_timer.isActive():
+            self.refresh_timer.stop() 

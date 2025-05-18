@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import time
+import logging
 from pathlib import Path
 
 
@@ -100,7 +101,7 @@ class DownloadHistoryDB:
         
         Args:
             record_id: 记录ID
-            status: 新状态（进行中、完成、失败、已取消）
+            status: 新状态（进行中、完成、失败、已取消、转换中断）
             output_path: 输出文件路径
             file_size: 文件大小（字节）
             error_message: 错误信息（如果有）
@@ -136,6 +137,97 @@ class DownloadHistoryDB:
             
             cursor.execute(query, params)
             conn.commit()
+    
+    def update_conversion_status(self, file_path, status, error_message=None, record_id=None):
+        """根据文件路径或记录ID更新转换状态
+        
+        Args:
+            file_path: 文件路径（webm或mp4）
+            status: 新状态（完成 或 转换中断）
+            error_message: 错误信息（如果有）
+            record_id: 记录ID，如果提供则优先使用
+            
+        Returns:
+            bool: 是否找到并更新了记录
+        """
+        # 文件路径可能是.webm或.mp4格式，需要处理两种情况
+        webm_path = file_path
+        mp4_path = file_path.replace('.webm', '.mp4')
+        
+        if webm_path.endswith('.mp4'):
+            webm_path = file_path.replace('.mp4', '.webm')
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # 如果提供了record_id，直接使用它
+            if record_id:
+                cursor.execute('SELECT id, output_path FROM download_history WHERE id = ?', (record_id,))
+                record = cursor.fetchone()
+                if not record:
+                    logging.error(f"找不到指定ID的记录: {record_id}")
+                    return False
+                logging.info(f"使用指定的记录ID: {record_id}")
+            else:
+                # 尝试查找匹配的记录，使用更灵活的匹配方式
+                cursor.execute('''
+                SELECT id, output_path FROM download_history
+                WHERE output_path = ? OR output_path = ? OR 
+                      output_path LIKE ? OR output_path LIKE ?
+                ''', (webm_path, mp4_path, f"%{os.path.basename(webm_path)}", f"%{os.path.basename(mp4_path)}"))
+                
+                record = cursor.fetchone()
+                if not record:
+                    logging.error(f"找不到匹配的记录，文件路径: {file_path}")
+                    # 不再自动选择最近的记录
+                    return False
+            
+            record_id = record[0]
+            
+            # 获取当前时间戳
+            current_time = int(time.time())
+            
+            # 构建更新查询
+            query = "UPDATE download_history SET status = ?, end_time = ?"
+            params = [status, current_time]
+            
+            # 计算持续时间
+            query += ", duration = end_time - start_time"
+            
+            # 根据状态更新文件路径和大小
+            if status == "完成" and file_path.endswith('.mp4'):
+                # 成功完成转换，更新文件路径为MP4
+                query += ", output_path = ?"
+                params.append(mp4_path)
+                
+                # 更新文件大小
+                if os.path.exists(mp4_path):
+                    file_size = os.path.getsize(mp4_path)
+                    query += ", file_size = ?"
+                    params.append(file_size)
+            elif status == "转换中断" and webm_path:
+                # 转换中断，确保保留webm文件路径
+                query += ", output_path = ?"
+                params.append(webm_path)
+                
+                # 如果webm文件存在，更新其大小
+                if os.path.exists(webm_path):
+                    file_size = os.path.getsize(webm_path)
+                    query += ", file_size = ?"
+                    params.append(file_size)
+                    logging.info(f"更新转换中断记录的webm文件路径: {webm_path}, 大小: {file_size}")
+            
+            # 添加错误信息（如果有）
+            if error_message:
+                query += ", error_message = ?"
+                params.append(error_message)
+                
+            query += " WHERE id = ?"
+            params.append(record_id)
+            
+            cursor.execute(query, params)
+            conn.commit()
+            return True
     
     def get_all_downloads(self, limit=100, offset=0):
         """获取所有下载记录
@@ -266,6 +358,10 @@ class DownloadHistoryDB:
             cursor.execute("SELECT COUNT(*) FROM download_history WHERE status = '已取消'")
             cancelled = cursor.fetchone()[0]
             
+            # 转换中断数
+            cursor.execute("SELECT COUNT(*) FROM download_history WHERE status = '转换中断'")
+            conversion_interrupted = cursor.fetchone()[0]
+            
             # 总下载大小
             cursor.execute("SELECT SUM(file_size) FROM download_history WHERE file_size > 0")
             total_size = cursor.fetchone()[0] or 0
@@ -275,5 +371,6 @@ class DownloadHistoryDB:
                 'completed': completed,
                 'failed': failed,
                 'cancelled': cancelled,
+                'conversion_interrupted': conversion_interrupted,
                 'total_size': total_size
             } 

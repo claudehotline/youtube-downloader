@@ -6,6 +6,9 @@ import threading
 import traceback
 from src.utils.video_utils import convert_webm_to_mp4
 import subprocess
+import json
+import re
+import glob
 
 
 class FetchInfoThread(QThread):
@@ -31,7 +34,7 @@ class DownloadThread(QThread):
     progress_updated = Signal(int, str)
     download_finished = Signal(bool, str)
     
-    def __init__(self, downloader, video_url, video_format, audio_format, subtitles, thumbnail, output_dir, threads=10, use_cookies=False, browser=None, video_info=None):
+    def __init__(self, downloader, video_url, video_format, audio_format, subtitles, thumbnail, output_dir, threads=10, use_cookies=False, browser=None, video_info=None, resume=False, output_path=None):
         super().__init__()
         self.downloader = downloader
         self.video_url = video_url
@@ -44,6 +47,8 @@ class DownloadThread(QThread):
         self.use_cookies = use_cookies
         self.browser = browser
         self.video_info = video_info  # 存储视频信息
+        self.resume = resume  # 是否断点续传
+        self.output_path = output_path  # 指定的输出路径（用于断点续传）
         self.db = None  # 数据库连接
         self.download_record_id = None  # 下载记录ID
     
@@ -56,30 +61,39 @@ class DownloadThread(QThread):
             # 构建格式规格
             format_spec = f"{self.video_format}+{self.audio_format}" if self.video_format and self.audio_format else (self.video_format or self.audio_format)
             
-            # 添加下载记录到数据库
-            if self.video_info:
-                # 如果有完整信息，则添加更多详情
-                self.download_record_id = self.db.add_download(
-                    video_id=self.video_info.get('id'),
-                    title=self.video_info.get('title', '未知标题'),
-                    url=self.video_url,
-                    thumbnail_url=self.video_info.get('thumbnail'),
-                    video_format=self.video_format,
-                    audio_format=self.audio_format,
-                    subtitles=self.subtitles,
-                    output_path=None  # 下载完成后更新
+            # 添加或更新下载记录（根据是否为断点续传）
+            if self.resume and self.download_record_id:
+                # 断点续传，更新已有记录状态
+                self.db.update_download_status(
+                    self.download_record_id,
+                    status='进行中',
+                    error_message=None  # 清除之前的错误信息
                 )
             else:
-                # 简单记录，没有详细信息
-                self.download_record_id = self.db.add_download(
-                    video_id=None,
-                    title=f"从 {self.video_url} 下载的视频",
-                    url=self.video_url,
-                    video_format=self.video_format,
-                    audio_format=self.audio_format,
-                    subtitles=self.subtitles,
-                    output_path=None  # 下载完成后更新
-                )
+                # 新下载，添加新记录
+                if self.video_info:
+                    # 如果有完整信息，则添加更多详情
+                    self.download_record_id = self.db.add_download(
+                        video_id=self.video_info.get('id'),
+                        title=self.video_info.get('title', '未知标题'),
+                        url=self.video_url,
+                        thumbnail_url=self.video_info.get('thumbnail'),
+                        video_format=self.video_format,
+                        audio_format=self.audio_format,
+                        subtitles=self.subtitles,
+                        output_path=self.output_path  # 可能为None
+                    )
+                else:
+                    # 简单记录，没有详细信息
+                    self.download_record_id = self.db.add_download(
+                        video_id=None,
+                        title=f"从 {self.video_url} 下载的视频",
+                        url=self.video_url,
+                        video_format=self.video_format,
+                        audio_format=self.audio_format,
+                        subtitles=self.subtitles,
+                        output_path=self.output_path  # 可能为None
+                    )
             
             # 获取下载的文件路径
             downloaded_file = self.downloader.download(
@@ -91,7 +105,8 @@ class DownloadThread(QThread):
                 self.progress_callback,
                 self.threads,
                 self.use_cookies,
-                self.browser
+                self.browser,
+                self.resume  # 传递断点续传参数
             )
             
             # 更新下载记录
@@ -105,6 +120,14 @@ class DownloadThread(QThread):
                 elif downloaded_file and os.path.exists(downloaded_file):
                     # 如果下载成功，获取文件大小并更新记录
                     file_size = os.path.getsize(downloaded_file)
+                    
+                    # 确保路径是.webm文件路径（如果存在的话）
+                    webm_path = downloaded_file
+                    if not webm_path.endswith('.webm') and '.webm' in downloaded_file:
+                        webm_path = re.sub(r'\.[^.]+$', '.webm', downloaded_file)
+                        if os.path.exists(webm_path):
+                            downloaded_file = webm_path
+                    
                     self.db.update_download_status(
                         self.download_record_id, 
                         status='完成',
@@ -167,10 +190,11 @@ class ConvertThread(QThread):
     convert_progress = Signal(str)
     convert_percent = Signal(int)
     
-    def __init__(self, file_path, options=None, parent=None):
+    def __init__(self, file_path, options=None, record_id=None, parent=None):
         super().__init__(parent)
         self.file_path = file_path
         self.options = options
+        self.record_id = record_id  # 记录ID
         self.is_canceled = False
         self.process = None  # 存储ffmpeg进程引用
         self.cancel_lock = threading.Lock()  # 添加锁以避免竞态条件
@@ -222,10 +246,54 @@ class ConvertThread(QThread):
                 success_message = f"转换完成，耗时: {elapsed_time:.2f}秒"
                 logging.info(success_message)
                 
+                # 更新数据库中的文件路径为MP4
+                try:
+                    from src.db.download_history import DownloadHistoryDB
+                    db = DownloadHistoryDB()
+                    db.update_conversion_status(
+                        output_file,  # MP4文件路径
+                        status="完成",
+                        record_id=self.record_id  # 使用指定的记录ID
+                    )
+                    logging.info(f"已更新MP4文件路径到数据库，记录ID: {self.record_id}, 文件: {output_file}")
+                except Exception as e:
+                    logging.error(f"更新MP4文件路径到数据库失败: {str(e)}")
+                
                 self.convert_finished.emit(True, success_message, output_file)
             else:
                 error_message = f"转换失败，请检查源文件和转换设置，文件路径: {self.file_path}"
                 logging.error(error_message)
+                
+                # 更新数据库状态为转换中断
+                try:
+                    from src.db.download_history import DownloadHistoryDB
+                    db = DownloadHistoryDB()
+                    
+                    # 确保文件路径是webm格式，而不是mp4
+                    file_path = self.file_path
+                    if file_path.endswith('.mp4'):
+                        file_path = file_path.replace('.mp4', '.webm')
+                        logging.info(f"转换文件路径从MP4到WebM: {self.file_path} -> {file_path}")
+                    
+                    # 验证文件是否存在
+                    if not os.path.exists(file_path) and os.path.exists(self.file_path):
+                        file_path = self.file_path
+                        logging.info(f"WebM文件不存在，使用原始路径: {file_path}")
+                    
+                    # 更新状态，使用指定的记录ID
+                    result = db.update_conversion_status(
+                        file_path,  # 原始文件路径(webm)
+                        status="转换中断",
+                        error_message=error_message,
+                        record_id=self.record_id
+                    )
+                    if result:
+                        logging.info(f"已成功将状态更新为转换中断，记录ID: {self.record_id}")
+                    else:
+                        logging.warning(f"更新转换中断状态失败，可能找不到记录ID: {self.record_id}")
+                except Exception as ex:
+                    logging.error(f"更新转换中断状态到数据库失败: {str(ex)}")
+                    logging.error(traceback.format_exc())
                 
                 self.convert_finished.emit(False, error_message, self.file_path)
         except Exception as e:
@@ -239,6 +307,37 @@ class ConvertThread(QThread):
             error_message = f"转换失败: {str(e)}，文件路径: {self.file_path}"
             logging.error(error_message)
             logging.error(error_details)
+            
+            # 更新数据库状态为转换中断
+            try:
+                from src.db.download_history import DownloadHistoryDB
+                db = DownloadHistoryDB()
+                
+                # 确保文件路径是webm格式，而不是mp4
+                file_path = self.file_path
+                if file_path.endswith('.mp4'):
+                    file_path = file_path.replace('.mp4', '.webm')
+                    logging.info(f"转换文件路径从MP4到WebM: {self.file_path} -> {file_path}")
+                
+                # 验证文件是否存在
+                if not os.path.exists(file_path) and os.path.exists(self.file_path):
+                    file_path = self.file_path
+                    logging.info(f"WebM文件不存在，使用原始路径: {file_path}")
+                
+                # 更新状态，使用指定的记录ID
+                result = db.update_conversion_status(
+                    file_path,  # 原始文件路径(webm)
+                    status="转换中断",
+                    error_message=error_message,
+                    record_id=self.record_id
+                )
+                if result:
+                    logging.info(f"已成功将状态更新为转换中断，记录ID: {self.record_id}")
+                else:
+                    logging.warning(f"更新转换中断状态失败，可能找不到记录ID: {self.record_id}")
+            except Exception as ex:
+                logging.error(f"更新转换中断状态到数据库失败: {str(ex)}")
+                logging.error(traceback.format_exc())
             
             self.convert_finished.emit(False, error_message, self.file_path)
     

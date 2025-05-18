@@ -10,11 +10,13 @@ import os
 import logging
 from src.utils.video_utils import convert_webm_to_mp4
 from src.threads import ConvertThread  # 导入新的转换线程类
+from src.db.download_history import DownloadHistoryDB
+import sqlite3
 
 
 class DownloadPage(QWidget):
     fetch_info_requested = Signal(str, bool, str)
-    download_requested = Signal(str, str, str, list, str, int, bool, str)
+    download_requested = Signal(str, str, str, list, str, int, bool, str, bool)
     cancel_fetch_requested = Signal()
     cancel_download_requested = Signal()
     
@@ -28,6 +30,7 @@ class DownloadPage(QWidget):
         self.preset_video_format = None  # 预设视频格式
         self.preset_audio_format = None  # 预设音频格式
         self.preset_subtitles = []       # 预设字幕
+        self.auto_start_download = False  # 自动开始下载标志
         
         self.setup_ui()
     
@@ -209,7 +212,7 @@ class DownloadPage(QWidget):
     def on_cancel_fetch_clicked(self):
         self.cancel_fetch_requested.emit()
     
-    def on_download_button_clicked(self):
+    def on_download_button_clicked(self, resume=False):
         if not self.video_info:
             QMessageBox.warning(self, "警告", "请先获取视频信息")
             return
@@ -242,32 +245,34 @@ class DownloadPage(QWidget):
             
         # 字幕选择为可选项，不再进行强制检查
         
-        # 确认选择
-        message = "您选择的下载内容:\n\n"
-        
-        if video_format:
-            message += f"视频格式: {video_format_text}\n"
-        else:
-            message += "视频格式: 不下载视频\n"
+        # 如果是续传模式，跳过确认对话框，直接开始下载
+        if not resume:
+            # 确认选择
+            message = "您选择的下载内容:\n\n"
             
-        if audio_format:
-            message += f"音频格式: {audio_format_text}\n"
-        else:
-            message += "音频格式: 不下载音频\n"
+            if video_format:
+                message += f"视频格式: {video_format_text}\n"
+            else:
+                message += "视频格式: 不下载视频\n"
+                
+            if audio_format:
+                message += f"音频格式: {audio_format_text}\n"
+            else:
+                message += "音频格式: 不下载音频\n"
+                
+            if selected_subtitles:
+                message += f"字幕: {', '.join(selected_subtitles_text)}\n"
+            else:
+                message += "字幕: 不下载字幕\n"
+                
+            message += "\n确认开始下载吗？"
             
-        if selected_subtitles:
-            message += f"字幕: {', '.join(selected_subtitles_text)}\n"
-        else:
-            message += "字幕: 不下载字幕\n"
-            
-        message += "\n确认开始下载吗？"
-        
-        # 显示确认对话框
-        reply = QMessageBox.question(self, "确认下载", message, 
-                                      QMessageBox.Yes | QMessageBox.No, 
-                                      QMessageBox.Yes)
-        if reply == QMessageBox.No:
-            return
+            # 显示确认对话框
+            reply = QMessageBox.question(self, "确认下载", message, 
+                                          QMessageBox.Yes | QMessageBox.No, 
+                                          QMessageBox.Yes)
+            if reply == QMessageBox.No:
+                return
         
         # 发送下载信号
         self.download_requested.emit(
@@ -278,7 +283,8 @@ class DownloadPage(QWidget):
             "",  # 输出目录，会在MainWindow中设置
             10,  # 线程数，会在MainWindow中设置
             False,  # 是否使用cookie
-            None   # 浏览器类型
+            None,   # 浏览器类型
+            resume  # 添加resume参数
         )
         
         self.download_button.setEnabled(False)
@@ -423,6 +429,9 @@ class DownloadPage(QWidget):
         self.download_button.setEnabled(True)
         self.fetch_button.setEnabled(True)
         self.cancel_fetch_button.setEnabled(False)
+        
+        # 重置自动下载标志，以免影响后续操作
+        self.auto_start_download = False
     
     def on_fetch_error(self, error_message):
         """处理获取视频信息失败的情况"""
@@ -655,8 +664,26 @@ class DownloadPage(QWidget):
                         'gpu': 0                      # 固定使用GPU 0
                     }
                     
+                    # 获取数据库中的记录ID
+                    record_id = None
+                    try:
+                        from src.db.download_history import DownloadHistoryDB
+                        db = DownloadHistoryDB()
+                        # 根据文件路径查询记录ID
+                        conn = sqlite3.connect(db.db_path)
+                        conn.row_factory = sqlite3.Row
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT id FROM download_history WHERE output_path = ?', (file_path,))
+                        record = cursor.fetchone()
+                        if record:
+                            record_id = record['id']
+                            logging.info(f"找到匹配的记录ID: {record_id}，用于WebM到MP4的转换")
+                        conn.close()
+                    except Exception as e:
+                        logging.error(f"查询记录ID失败: {str(e)}")
+                    
                     # 创建并启动转换线程
-                    self.convert_thread = ConvertThread(file_path, options=convert_options)
+                    self.convert_thread = ConvertThread(file_path, options=convert_options, record_id=record_id)
                     self.convert_thread.convert_progress.connect(self.on_convert_progress)
                     self.convert_thread.convert_percent.connect(self.on_convert_percent)
                     self.convert_thread.convert_finished.connect(self.on_convert_finished)
@@ -693,22 +720,45 @@ class DownloadPage(QWidget):
         
     def on_convert_finished(self, success, message, file_path):
         """处理转换完成"""
+        # 连接数据库
+        db = DownloadHistoryDB()
+        
         # 恢复进度条的正常范围
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100 if success else 0)
         self.download_button.setEnabled(True)
         self.cancel_button.setEnabled(False)  # 转换完成后禁用取消按钮
         
-        # 如果是由取消操作导致的，显示取消信息而不是错误
+        # 获取转换线程中的记录ID
+        record_id = None
+        if hasattr(self, 'convert_thread') and self.convert_thread:
+            record_id = self.convert_thread.record_id
+            
+        # 如果是由取消操作导致的，显示取消信息而不是错误，并更新数据库
         if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.is_canceled:
             self.status_label.setText("视频转换已取消")
             self.status_label.setStyleSheet("")
             logging.info("用户取消了视频转换")
+            
+            # 更新数据库中的转换状态为"转换中断"
+            db.update_conversion_status(
+                file_path=file_path,
+                status="转换中断",
+                error_message="用户取消了视频转换",
+                record_id=record_id
+            )
             return
         
         if success:
             # 获取原始webm文件路径
             webm_file = file_path.replace('.mp4', '.webm')
+            
+            # 更新数据库中的状态为"完成"，并更新为mp4文件路径
+            db.update_conversion_status(
+                file_path=file_path,
+                status="完成",
+                record_id=record_id
+            )
             
             # 直接删除原始webm文件，不再询问
             try:
@@ -725,6 +775,14 @@ class DownloadPage(QWidget):
             # 在状态标签显示消息，不再显示对话框
             self.status_label.setText(converted_message)
         else:
+            # 转换失败，更新数据库
+            db.update_conversion_status(
+                file_path=file_path,
+                status="转换中断",
+                error_message=f"转换失败: {message}",
+                record_id=record_id
+            )
+            
             # 转换失败显示错误信息，但不再弹出对话框
             error_message = "WebM文件转换为MP4失败，但下载已完成"
             self.status_label.setText(error_message)

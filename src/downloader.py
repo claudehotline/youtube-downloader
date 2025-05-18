@@ -256,7 +256,7 @@ class YtDownloader:
     
     def download(self, url, format_spec, subtitles=None, download_thumbnail=False, 
                output_dir=None, progress_callback=None, threads=10,
-               use_cookies=False, browser=None):
+               use_cookies=False, browser=None, resume=False):
         """
         下载视频
         
@@ -270,6 +270,7 @@ class YtDownloader:
             threads: 下载线程数
             use_cookies: 是否使用浏览器cookie
             browser: 浏览器类型
+            resume: 是否继续上次的下载（断点续传）
             
         Returns:
             str: 下载文件的路径
@@ -288,12 +289,16 @@ class YtDownloader:
             self.debug(f"开始下载：{url}")
             self.debug(f"格式：{format_spec}")
             self.debug(f"输出目录：{output_dir}")
+            if resume:
+                self.debug("模式：断点续传")
+                
+            # 1. 如果是续传模式且有指定格式，则跳过字幕和缩略图的下载
+            # 如果不是续传模式，则正常下载字幕和缩略图
+            should_download_subtitles = subtitles and len(subtitles) > 0 and not resume
+            should_download_thumbnail = download_thumbnail and not resume
             
-            # 如果用户想要下载字幕或缩略图，我们先单独处理这些，然后再下载视频
-            # 这样可以确保字幕和缩略图的处理不会受到视频下载进度的影响
-            
-            # 1. 首先处理字幕下载
-            if subtitles and len(subtitles) > 0:
+            # 2. 处理字幕下载
+            if should_download_subtitles:
                 if progress_callback:
                     progress_callback(0, "正在下载字幕...")
                 
@@ -346,8 +351,8 @@ class YtDownloader:
                         progress_callback(0, "下载已取消")
                     return None
             
-            # 2. 处理缩略图下载
-            if download_thumbnail:
+            # 3. 处理缩略图下载
+            if should_download_thumbnail:
                 if progress_callback:
                     progress_callback(0, "正在下载封面...")
                 
@@ -399,19 +404,25 @@ class YtDownloader:
                         progress_callback(0, "下载已取消")
                     return None
             
-            # 3. 如果没有指定格式，则不下载视频
+            # 4. 如果没有指定格式，则不下载视频
             if not format_spec:
                 if progress_callback:
                     progress_callback(100, "下载完成")
                 return None
             
-            # 4. 下载视频
+            # 5. 下载视频
             # 基本参数
             cmd = [self.ytdlp_path, 
                    url, 
                    "--no-mtime",  # 不使用视频上传时间作为文件修改时间
                    "-o", os.path.join(output_dir, "%(title)s.%(ext)s"),  # 设置输出路径
                    "-N", str(threads)]  # 设置线程数
+            
+            # 添加断点续传参数，默认开启
+            # 如果明确指定断点续传，则确保参数存在
+            if resume:
+                if "--continue" not in cmd:
+                    cmd.append("--continue")
             
             # 已经单独下载了字幕和缩略图，不需要重复下载
             # 添加格式参数
