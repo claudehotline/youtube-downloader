@@ -45,7 +45,7 @@ build/
 
 # 项目特定
 # config.ini  # 如果这是用户特定的配置文件，取消注释
-data/       # 数据库文件目录
+data/download_history.db  # 数据库文件
 Output/     # Inno Setup生成的安装包目录
 installer.iss  # Inno Setup安装脚本
 *.spec      # PyInstaller规格文件
