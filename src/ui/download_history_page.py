@@ -9,6 +9,7 @@ import os
 import datetime
 import locale
 from src.db.download_history import DownloadHistoryDB
+from src.ui.convert_dialog import ConvertDialog
 
 
 class DownloadHistoryPage(QWidget):
@@ -16,7 +17,7 @@ class DownloadHistoryPage(QWidget):
     clear_all_requested = Signal()
     redownload_requested = Signal(dict)  # 发送下载记录信息
     continue_download_requested = Signal(dict)  # 发送下载记录信息
-    continue_conversion_requested = Signal(dict)  # 发送下载记录信息，用于继续转换
+    continue_conversion_requested = Signal(dict)  # 保留此信号定义，以防未来需要
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -542,7 +543,6 @@ class DownloadHistoryPage(QWidget):
         if file_path.endswith('.mp4'):
             # 如果是.mp4文件路径，转换为.webm文件路径
             webm_path = file_path.replace('.mp4', '.webm')
-            self.log_message = f"文件路径调整: {file_path} -> {webm_path}"
         
         # 检查.webm文件是否存在
         if not webm_path.endswith('.webm') or not os.path.exists(webm_path):
@@ -554,17 +554,12 @@ class DownloadHistoryPage(QWidget):
             if reply == QMessageBox.StandardButton.No:
                 return
         
-        reply = QMessageBox.question(
-            self, "确认转换", 
-            f"确定要将【{record['title']}】从WebM转换为MP4格式吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        # 创建并显示转换对话框
+        dialog = ConvertDialog(webm_path, self)
+        dialog.exec()
         
-        if reply == QMessageBox.StandardButton.Yes:
-            # 发送信号，传递记录信息，但确保文件路径是.webm
-            record_copy = record.copy()
-            record_copy['output_path'] = webm_path
-            self.continue_conversion_requested.emit(record_copy)
+        # 转换结束后刷新列表
+        self.load_download_history()
     
     def showEvent(self, event):
         """页面显示时触发"""
