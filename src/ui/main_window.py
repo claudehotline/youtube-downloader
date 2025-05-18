@@ -8,6 +8,7 @@ import os
 from src.ui.download_page import DownloadPage
 from src.ui.settings_page import SettingsPage
 from src.ui.history_page import HistoryPage
+from src.ui.download_history_page import DownloadHistoryPage
 from src.ui.styles import (get_application_style, get_navigation_button_style, 
                           get_active_navigation_button_style, get_dark_style,
                           get_dark_navigation_button_style, get_dark_active_navigation_button_style,
@@ -20,6 +21,7 @@ from src.downloader import YtDownloader
 from src.config import UI_MIN_WIDTH, UI_MIN_HEIGHT, APP_NAME, TEMP_DIR, DOWNLOADS_DIR
 from src.config_manager import ConfigManager
 from src.utils.video_utils import clean_old_files
+from src.db.download_history import DownloadHistoryDB
 
 
 class MainWindow(QMainWindow):
@@ -73,10 +75,11 @@ class MainWindow(QMainWindow):
         # 创建QStackedWidget
         self.stacked_widget = QStackedWidget()
         
-        # 创建三个页面
+        # 创建四个页面
         self.download_page = DownloadPage()
         self.settings_page = SettingsPage(self.config_manager)
         self.history_page = HistoryPage()
+        self.download_history_page = DownloadHistoryPage()
         
         # 连接下载页面的信号
         self.download_page.fetch_info_requested.connect(self.fetch_video_info)
@@ -90,10 +93,15 @@ class MainWindow(QMainWindow):
         # 连接历史页面的信号
         self.history_page.clear_log_requested.connect(self.clear_log)
         
+        # 连接下载历史页面的信号
+        self.download_history_page.delete_history_requested.connect(self.on_delete_history)
+        self.download_history_page.clear_all_requested.connect(self.on_clear_all_history)
+        
         # 将页面添加到堆叠部件
         self.stacked_widget.addWidget(self.download_page)  # 索引0 - 下载页面
         self.stacked_widget.addWidget(self.settings_page)  # 索引1 - 设置页面
-        self.stacked_widget.addWidget(self.history_page)   # 索引2 - 历史记录页面
+        self.stacked_widget.addWidget(self.history_page)   # 索引2 - 日志页面
+        self.stacked_widget.addWidget(self.download_history_page)  # 索引3 - 下载历史页面
         
         # 创建导航按钮
         self.download_nav_btn = QPushButton("下载视频")
@@ -104,9 +112,13 @@ class MainWindow(QMainWindow):
         # 使用QStyle的标准图标
         self.settings_nav_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
         
-        self.history_nav_btn = QPushButton("历史记录")
+        self.history_nav_btn = QPushButton("操作日志")
         # 使用QStyle的标准图标
         self.history_nav_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogInfoView))
+        
+        self.download_history_nav_btn = QPushButton("下载历史")
+        # 使用QStyle的标准图标
+        self.download_history_nav_btn.setIcon(self.style().standardIcon(QStyle.SP_DriveHDIcon))
         
         # 设置按钮样式
         nav_button_style = get_navigation_button_style()
@@ -114,16 +126,19 @@ class MainWindow(QMainWindow):
         self.download_nav_btn.setStyleSheet(nav_button_style)
         self.settings_nav_btn.setStyleSheet(nav_button_style)
         self.history_nav_btn.setStyleSheet(nav_button_style)
+        self.download_history_nav_btn.setStyleSheet(nav_button_style)
         
         # 连接导航按钮信号
         self.download_nav_btn.clicked.connect(lambda: self.switch_page(0))
         self.settings_nav_btn.clicked.connect(lambda: self.switch_page(1))
         self.history_nav_btn.clicked.connect(lambda: self.switch_page(2))
+        self.download_history_nav_btn.clicked.connect(lambda: self.switch_page(3))
         
         # 添加按钮到导航布局
         nav_layout.addWidget(self.download_nav_btn)
         nav_layout.addWidget(self.settings_nav_btn)
         nav_layout.addWidget(self.history_nav_btn)
+        nav_layout.addWidget(self.download_history_nav_btn)
         nav_layout.addStretch()  # 添加弹性空间，使按钮靠上排列
         
         # 将导航和堆叠部件添加到主布局
@@ -176,6 +191,9 @@ class MainWindow(QMainWindow):
         """处理获取到的视频信息"""
         self.download_page.on_info_fetched(video_info)
         
+        # 存储视频信息供下载使用
+        self.current_video_info = video_info
+        
         # 记录日志
         title = video_info.get('title', '未知标题')
         self.log_message(f"成功获取视频信息: {title}")
@@ -222,6 +240,9 @@ class MainWindow(QMainWindow):
         if use_cookies:
             self.log_message(f"使用{browser}浏览器的cookies")
         
+        # 获取视频信息
+        video_info = getattr(self, 'current_video_info', None)
+        
         # 创建下载线程
         self.download_thread = DownloadThread(
             self.downloader,
@@ -233,7 +254,8 @@ class MainWindow(QMainWindow):
             output_dir,
             threads,
             use_cookies,
-            browser
+            browser,
+            video_info  # 传递视频信息
         )
         
         self.download_thread.progress_updated.connect(self.update_progress)
@@ -429,6 +451,7 @@ class MainWindow(QMainWindow):
         self.download_nav_btn.setStyleSheet(nav_button_style)
         self.settings_nav_btn.setStyleSheet(nav_button_style)
         self.history_nav_btn.setStyleSheet(nav_button_style)
+        self.download_history_nav_btn.setStyleSheet(nav_button_style)
         
         # 设置当前活跃页对应的按钮样式
         if index == 0:
@@ -437,6 +460,8 @@ class MainWindow(QMainWindow):
             self.settings_nav_btn.setStyleSheet(active_nav_button_style)
         elif index == 2:
             self.history_nav_btn.setStyleSheet(active_nav_button_style)
+        elif index == 3:
+            self.download_history_nav_btn.setStyleSheet(active_nav_button_style)
     
     @Slot(dict)
     def on_settings_saved(self, settings):
@@ -491,4 +516,15 @@ class MainWindow(QMainWindow):
             if temp_deleted > 0 or downloads_deleted > 0:
                 logging.info(f"自动清理完成: 临时目录删除了{temp_deleted}个文件，下载目录删除了{downloads_deleted}个过期WebM文件")
         except Exception as e:
-            logging.error(f"自动清理临时文件失败: {e}") 
+            logging.error(f"自动清理临时文件失败: {e}")
+    
+    # 下载历史记录页面相关方法
+    def on_delete_history(self, record_id):
+        """处理删除历史记录请求"""
+        # 这个方法只是接收信号，实际删除工作在下载历史页面内完成
+        pass
+    
+    def on_clear_all_history(self):
+        """处理清空所有历史记录请求"""
+        # 这个方法只是接收信号，实际清空工作在下载历史页面内完成
+        pass

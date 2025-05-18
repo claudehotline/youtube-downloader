@@ -31,7 +31,7 @@ class DownloadThread(QThread):
     progress_updated = Signal(int, str)
     download_finished = Signal(bool, str)
     
-    def __init__(self, downloader, video_url, video_format, audio_format, subtitles, thumbnail, output_dir, threads=10, use_cookies=False, browser=None):
+    def __init__(self, downloader, video_url, video_format, audio_format, subtitles, thumbnail, output_dir, threads=10, use_cookies=False, browser=None, video_info=None):
         super().__init__()
         self.downloader = downloader
         self.video_url = video_url
@@ -43,10 +43,43 @@ class DownloadThread(QThread):
         self.threads = threads
         self.use_cookies = use_cookies
         self.browser = browser
+        self.video_info = video_info  # 存储视频信息
+        self.db = None  # 数据库连接
+        self.download_record_id = None  # 下载记录ID
     
     def run(self):
         try:
+            # 导入数据库模块
+            from src.db.download_history import DownloadHistoryDB
+            self.db = DownloadHistoryDB()
+            
+            # 构建格式规格
             format_spec = f"{self.video_format}+{self.audio_format}" if self.video_format and self.audio_format else (self.video_format or self.audio_format)
+            
+            # 添加下载记录到数据库
+            if self.video_info:
+                # 如果有完整信息，则添加更多详情
+                self.download_record_id = self.db.add_download(
+                    video_id=self.video_info.get('id'),
+                    title=self.video_info.get('title', '未知标题'),
+                    url=self.video_url,
+                    thumbnail_url=self.video_info.get('thumbnail'),
+                    video_format=self.video_format,
+                    audio_format=self.audio_format,
+                    subtitles=self.subtitles,
+                    output_path=None  # 下载完成后更新
+                )
+            else:
+                # 简单记录，没有详细信息
+                self.download_record_id = self.db.add_download(
+                    video_id=None,
+                    title=f"从 {self.video_url} 下载的视频",
+                    url=self.video_url,
+                    video_format=self.video_format,
+                    audio_format=self.audio_format,
+                    subtitles=self.subtitles,
+                    output_path=None  # 下载完成后更新
+                )
             
             # 获取下载的文件路径
             downloaded_file = self.downloader.download(
@@ -61,6 +94,31 @@ class DownloadThread(QThread):
                 self.browser
             )
             
+            # 更新下载记录
+            if self.download_record_id:
+                if self.downloader.is_cancelled:
+                    # 如果下载被取消
+                    self.db.update_download_status(
+                        self.download_record_id, 
+                        status='已取消'
+                    )
+                elif downloaded_file and os.path.exists(downloaded_file):
+                    # 如果下载成功，获取文件大小并更新记录
+                    file_size = os.path.getsize(downloaded_file)
+                    self.db.update_download_status(
+                        self.download_record_id, 
+                        status='完成',
+                        output_path=downloaded_file,
+                        file_size=file_size
+                    )
+                else:
+                    # 下载完成但找不到文件
+                    self.db.update_download_status(
+                        self.download_record_id, 
+                        status='完成',
+                        error_message='找不到下载的文件'
+                    )
+            
             # 只有在未取消的情况下才发送完成信号
             if not self.downloader.is_cancelled:
                 if downloaded_file and os.path.exists(downloaded_file):
@@ -68,15 +126,38 @@ class DownloadThread(QThread):
                 else:
                     self.download_finished.emit(True, "下载完成！")
         except Exception as e:
+            # 更新下载记录为失败状态
+            if self.download_record_id:
+                self.db.update_download_status(
+                    self.download_record_id, 
+                    status='失败',
+                    error_message=str(e)
+                )
+            
             self.download_finished.emit(False, f"下载失败: {str(e)}")
     
     def progress_callback(self, percent, message):
+        # 更新进度
         self.progress_updated.emit(percent, message)
+        
+        # 对于取消消息，更新数据库记录
+        if "取消" in message and self.download_record_id:
+            self.db.update_download_status(
+                self.download_record_id, 
+                status='已取消'
+            )
     
     def cancel(self):
         # 调用下载器的取消方法
         if self.downloader:
             self.downloader.cancel_download()
+            
+            # 更新下载记录为已取消状态
+            if self.download_record_id:
+                self.db.update_download_status(
+                    self.download_record_id, 
+                    status='已取消'
+                )
 
 
 # 添加WebM到MP4的转换线程
