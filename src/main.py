@@ -5,6 +5,66 @@ from datetime import datetime
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 
+# 设置默认编码为UTF-8，解决中文Windows系统的编码问题
+if hasattr(sys, 'setdefaultencoding'):
+    sys.setdefaultencoding('utf-8')
+
+# 设置环境变量，确保子进程使用UTF-8编码
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+
+# 添加全局STARTUPINFO配置，用于隐藏Windows上的子进程窗口
+if os.name == 'nt':
+    import subprocess
+    # 设置全局STARTUPINFO对象，所有子进程都会隐藏窗口
+    STARTUPINFO = subprocess.STARTUPINFO()
+    STARTUPINFO.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    STARTUPINFO.wShowWindow = 0  # SW_HIDE
+    
+    # 替换subprocess.Popen原始方法
+    original_popen = subprocess.Popen
+    def _custom_popen(*args, **kwargs):
+        # 如果在Windows上，自动添加startupinfo
+        if os.name == 'nt' and 'startupinfo' not in kwargs:
+            kwargs['startupinfo'] = STARTUPINFO
+        # 强制设置UTF-8编码，避免GBK编码错误
+        if 'encoding' not in kwargs:
+            kwargs['encoding'] = 'utf-8'
+        if 'errors' not in kwargs:
+            kwargs['errors'] = 'replace'  # 无法编码的字符将被替换而不是抛出错误
+        return original_popen(*args, **kwargs)
+    # 替换默认的Popen方法
+    subprocess.Popen = _custom_popen
+    
+    # 替换subprocess.run方法
+    original_run = subprocess.run
+    def _custom_run(*args, **kwargs):
+        # 如果在Windows上，自动添加startupinfo
+        if os.name == 'nt' and 'startupinfo' not in kwargs:
+            kwargs['startupinfo'] = STARTUPINFO
+        # 强制设置UTF-8编码，避免GBK编码错误
+        if 'encoding' not in kwargs:
+            kwargs['encoding'] = 'utf-8'
+        if 'errors' not in kwargs:
+            kwargs['errors'] = 'replace'  # 无法编码的字符将被替换而不是抛出错误
+        return original_run(*args, **kwargs)
+    # 替换默认的run方法
+    subprocess.run = _custom_run
+    
+    # 替换subprocess.call方法
+    original_call = subprocess.call
+    def _custom_call(*args, **kwargs):
+        # 如果在Windows上，自动添加startupinfo
+        if os.name == 'nt' and 'startupinfo' not in kwargs:
+            kwargs['startupinfo'] = STARTUPINFO
+        # 强制设置UTF-8编码，避免GBK编码错误
+        if 'encoding' not in kwargs:
+            kwargs['encoding'] = 'utf-8'
+        if 'errors' not in kwargs:
+            kwargs['errors'] = 'replace'  # 无法编码的字符将被替换而不是抛出错误
+        return original_call(*args, **kwargs)
+    # 替换默认的call方法
+    subprocess.call = _custom_call
+
 # 添加src目录到Python路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)

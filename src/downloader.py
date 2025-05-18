@@ -16,13 +16,14 @@ from pathlib import Path
 YTDLP_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cmd", "yt-dlp.exe")
 
 class YtDownloader:
-    def __init__(self, ytdlp_path: str = None, debug_callback: Callable[[str], None] = None):
+    def __init__(self, ytdlp_path: str = None, debug_callback: Callable[[str], None] = None, always_use_cookies: bool = True):
         """
         初始化下载器
         
         Args:
             ytdlp_path: yt-dlp可执行文件的路径，如果为None则使用当前目录下的yt-dlp.exe
             debug_callback: 调试信息回调函数，用于将调试信息传回UI
+            always_use_cookies: 是否始终使用cookies（默认为True）
         """
         self.ytdlp_path = ytdlp_path or YTDLP_PATH
         if not os.path.exists(self.ytdlp_path):
@@ -30,6 +31,7 @@ class YtDownloader:
         self.processes = []  # 存储所有进程对象
         self.is_cancelled = False  # 取消标志
         self.debug_callback = debug_callback  # 调试信息回调
+        self.always_use_cookies = always_use_cookies  # 是否总是使用cookies
     
     def debug(self, message: str):
         """输出调试信息，过滤重复的进度信息"""
@@ -109,6 +111,10 @@ class YtDownloader:
         Returns:
             视频信息字典
         """
+        # 如果设置了总是使用cookies，则强制启用
+        if self.always_use_cookies:
+            use_cookies = True
+            
         # 简化命令，只使用必要的参数
         cmd = [
             self.ytdlp_path,
@@ -139,14 +145,15 @@ class YtDownloader:
                 start_time = time.time()
                 self.debug(f"尝试次数 #{retry_count+1}")
                 
+                # 对于获取视频信息，不使用CREATE_NO_WINDOW标志，确保正确捕获输出
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     encoding='utf-8',  # 明确指定编码
-                    errors='replace',  # 遇到无法解码的字符时替换
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    errors='replace'   # 遇到无法解码的字符时替换
+                    # 不添加CREATE_NO_WINDOW标志，确保能正确获取输出
                 )
                 self.processes.append(process)
                 
@@ -268,6 +275,10 @@ class YtDownloader:
             str: 下载文件的路径
         """
         try:
+            # 如果设置了总是使用cookies，则强制启用
+            if self.always_use_cookies:
+                use_cookies = True
+                
             # 如果之前有下载任务被取消，重置状态
             self.is_cancelled = False
             self.download_process = None
@@ -570,6 +581,10 @@ class YtDownloader:
         Returns:
             格式列表的文本输出
         """
+        # 如果设置了总是使用cookies，则强制启用
+        if self.always_use_cookies:
+            use_cookies = True
+            
         # 使用-F参数获取格式列表
         cmd = [
             self.ytdlp_path,

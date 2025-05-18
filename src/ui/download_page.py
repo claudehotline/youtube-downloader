@@ -285,8 +285,47 @@ class DownloadPage(QWidget):
     
     def on_cancel_button_clicked(self):
         self.cancel_button.setEnabled(False)
-        self.status_label.setText("正在取消下载...")
+        self.status_label.setText("正在取消操作...")
+        
+        # 如果有转换线程正在运行，先终止它
+        if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.isRunning():
+            self.status_label.setText("正在取消视频转换...")
+            self.progress_detail_label.setText("正在终止ffmpeg进程，请稍候...")
+            
+            # 添加转换取消的直观反馈
+            self.progress_bar.setRange(0, 0)  # 设置为未确定状态，显示滚动条
+            
+            # 调用转换线程的取消方法
+            self.convert_thread.cancel()  # 调用转换线程的取消方法
+            
+            # 设置一个定时器定期检查取消状态
+            self.check_cancel_timer = QTimer(self)
+            self.check_cancel_timer.timeout.connect(self.check_convert_cancellation)
+            self.check_cancel_timer.start(500)  # 每500毫秒检查一次
+            
+            return  # 提前返回，剩下的由定时器处理
+        
+        # 取消下载进程
         self.cancel_download_requested.emit()
+    
+    def check_convert_cancellation(self):
+        """检查转换取消状态"""
+        if not hasattr(self, 'convert_thread') or not self.convert_thread or not self.convert_thread.isRunning():
+            # 转换线程已经不在运行，取消成功
+            self.check_cancel_timer.stop()
+            self.progress_bar.setRange(0, 100)  # 恢复正常范围
+            self.progress_bar.setValue(0)
+            self.status_label.setText("视频转换已取消")
+            self.progress_detail_label.setText("")
+            self.download_button.setEnabled(True)
+        elif hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.is_canceled:
+            # 转换已标记为取消，但可能仍在处理资源清理
+            self.status_label.setText("转换取消中...")
+            self.progress_detail_label.setText("正在清理资源，可能需要几秒钟...")
+        else:
+            # 尝试再次取消
+            self.convert_thread.cancel()
+            self.status_label.setText("再次尝试终止转换进程...")
     
     def start_loading_animation(self):
         """启动加载动画"""
@@ -471,7 +510,7 @@ class DownloadPage(QWidget):
                     convert_options = {
                         'video_codec': 'av1_nvenc',   # 使用NVIDIA GPU加速AV1编码器
                         'preset': 'p7',               # 最高质量预设
-                        'tune': 'hq',                 # 高质量调优
+                        'tune': 'uhq',                # 超高质量调优
                         'rc': 'vbr',                  # 使用可变比特率模式
                         'cq': 20,                     # AV1的VBR质量值(0-63，值越低质量越高)
                         'audio_bitrate': '320k',      # 音频比特率
@@ -481,6 +520,8 @@ class DownloadPage(QWidget):
                         'spatial-aq': True,           # 空间自适应量化，提高视觉质量
                         'temporal-aq': True,          # 时间自适应量化，提高动态场景质量
                         'aq-strength': 8,             # AQ强度(1-15)
+                        'tf_level': 0,                # 时间滤波级别
+                        'lookahead_level': 3,         # 前瞻级别
                         'fallback_codecs': ['h264_nvenc', 'hevc_nvenc', 'libx264'],  # 备用编码器列表
                         'gpu': 0                      # 固定使用GPU 0
                     }
@@ -520,6 +561,13 @@ class DownloadPage(QWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100 if success else 0)
         self.download_button.setEnabled(True)
+        
+        # 如果是由取消操作导致的，显示取消信息而不是错误
+        if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.is_canceled:
+            self.status_label.setText("视频转换已取消")
+            self.status_label.setStyleSheet("")
+            logging.info("用户取消了视频转换")
+            return
         
         if success:
             # 获取原始webm文件路径

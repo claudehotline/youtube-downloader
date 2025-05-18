@@ -3,6 +3,12 @@ import sys
 import os
 import subprocess
 
+# 处理无控制台模式下sys.stdout和sys.stderr可能为None的情况
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding='utf-8')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding='utf-8')
+
 # 设置日志格式
 logging.basicConfig(
     level=logging.INFO,

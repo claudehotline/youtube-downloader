@@ -5,6 +5,7 @@ import time
 import threading
 import traceback
 from src.utils.video_utils import convert_webm_to_mp4
+import subprocess
 
 
 class FetchInfoThread(QThread):
@@ -90,6 +91,7 @@ class ConvertThread(QThread):
         self.file_path = file_path
         self.options = options
         self.is_canceled = False
+        self.process = None  # 存储ffmpeg进程引用
         self.record_id = None  # 用于存储历史记录ID
     
     def run(self):
@@ -100,7 +102,11 @@ class ConvertThread(QThread):
             # 不再记录转换历史
             
             # 定义进度回调函数
-            def progress_callback(percent, message):
+            def progress_callback(percent, message, process_ref=None):
+                # 存储进程引用
+                if process_ref and not self.process:
+                    self.process = process_ref
+                
                 self.convert_percent.emit(percent)
                 self.convert_progress.emit(message)
                 
@@ -108,6 +114,8 @@ class ConvertThread(QThread):
                 
                 # 检查是否取消
                 if self.is_canceled:
+                    # 如果被取消，返回False来通知convert_webm_to_mp4函数停止处理
+                    logging.info("检测到取消请求，正在终止视频转换")
                     return False
                 return True
             
@@ -119,6 +127,11 @@ class ConvertThread(QThread):
                 options=self.options
             )
             
+            # 如果已取消，直接返回取消信息
+            if self.is_canceled:
+                self.convert_finished.emit(False, "用户取消了转换", self.file_path)
+                return
+            
             # 检查转换结果
             if output_file.endswith('.mp4') and os.path.exists(output_file):
                 elapsed_time = time.time() - start_time
@@ -129,23 +142,74 @@ class ConvertThread(QThread):
                 
                 self.convert_finished.emit(True, success_message, output_file)
             else:
-                error_message = "转换失败，请检查源文件和转换设置"
+                error_message = f"转换失败，请检查源文件和转换设置，文件路径: {self.file_path}"
                 logging.error(error_message)
                 
                 # 不再更新历史记录
                 
                 self.convert_finished.emit(False, error_message, self.file_path)
         except Exception as e:
+            # 如果已取消，直接返回取消信息而不是错误
+            if self.is_canceled:
+                self.convert_finished.emit(False, "用户取消了转换", self.file_path)
+                return
+                
             error_details = traceback.format_exc()
-            error_message = f"转换过程中发生异常: {str(e)}\n{error_details}"
+            error_message = f"转换失败: {str(e)}，文件路径: {self.file_path}"
             logging.error(error_message)
+            logging.error(error_details)
             
             # 不再更新历史记录
             
-            self.convert_finished.emit(False, str(e), self.file_path)
+            self.convert_finished.emit(False, error_message, self.file_path)
     
     def cancel(self):
         """取消转换"""
+        logging.info(f"请求取消视频转换: {self.file_path}")
         self.is_canceled = True
+        
+        # 直接终止任何运行中的ffmpeg进程
+        if self.process and self.process.poll() is None:
+            try:
+                logging.info(f"终止ffmpeg进程 PID:{self.process.pid}")
+                if os.name == 'nt':
+                    # 先尝试使用taskkill命令终止进程
+                    try:
+                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(self.process.pid)],
+                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        logging.info("成功使用taskkill终止进程")
+                    except Exception as e:
+                        logging.error(f"使用taskkill终止进程失败: {str(e)}")
+                        
+                        # 如果taskkill失败，尝试使用process对象的方法
+                        self.process.terminate()
+                        time.sleep(0.5)
+                        if self.process.poll() is None:
+                            self.process.kill()
+                            logging.info("成功使用process.kill()终止进程")
+                else:
+                    # 类Unix系统
+                    self.process.terminate()
+                    time.sleep(0.5)
+                    if self.process.poll() is None:
+                        self.process.kill()
+                logging.info("ffmpeg进程已终止")
+                
+                # 如果进程仍在运行，尝试更极端的方式
+                if self.process.poll() is None:
+                    logging.warning("进程仍在运行，尝试更极端的终止方式")
+                    try:
+                        # 使用Windows特有的方法强制终止进程
+                        if os.name == 'nt':
+                            os.system(f'TASKKILL /F /PID {self.process.pid} /T')
+                            logging.info(f"尝试使用系统命令终止进程: TASKKILL /F /PID {self.process.pid} /T")
+                        else:
+                            # 类Unix系统
+                            os.system(f'kill -9 {self.process.pid}')
+                            logging.info(f"尝试使用系统命令终止进程: kill -9 {self.process.pid}")
+                    except Exception as ex:
+                        logging.error(f"使用系统命令终止进程失败: {str(ex)}")
+            except Exception as e:
+                logging.error(f"终止进程时出错: {str(e)}")
         
         # 不再更新历史记录

@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
         self.config_manager = ConfigManager()
         
         # 初始化下载器
-        self.downloader = YtDownloader(debug_callback=self.on_debug_message)
+        self.downloader = YtDownloader(debug_callback=self.on_debug_message, always_use_cookies=True)
         
         # 初始化进度记录变量
         self.last_logged_percent = 0
