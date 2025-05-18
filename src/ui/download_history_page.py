@@ -453,8 +453,7 @@ class DownloadHistoryPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             # 发送信号，传递记录信息
             self.redownload_requested.emit(record)
-            # 切换到下载页面
-            self.parent().switch_page(0)  # 假设下载页面的索引是0
+            # 主窗口会处理信号并切换页面
     
     def on_continue_download_triggered(self, record):
         """处理继续下载请求"""
@@ -467,5 +466,4 @@ class DownloadHistoryPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             # 发送信号，传递记录信息
             self.continue_download_requested.emit(record)
-            # 切换到下载页面
-            self.parent().switch_page(0)  # 假设下载页面的索引是0 
+            # 主窗口会处理信号并切换页面 

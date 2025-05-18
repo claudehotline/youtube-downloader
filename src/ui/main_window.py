@@ -537,6 +537,9 @@ class MainWindow(QMainWindow):
         # 记录日志
         self.log_message(f"从历史记录重新下载: {record['title']}")
         
+        # 切换到下载页面
+        self.switch_page(0)
+        
         # 设置URL并获取视频信息
         self.download_page.url_input.setText(record['url'])
         
@@ -560,6 +563,9 @@ class MainWindow(QMainWindow):
         """处理继续下载请求"""
         # 记录日志
         self.log_message(f"继续下载: {record['title']}")
+        
+        # 切换到下载页面
+        self.switch_page(0)
         
         # 设置URL并获取视频信息
         self.download_page.url_input.setText(record['url'])
