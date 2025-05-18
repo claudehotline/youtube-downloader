@@ -18,7 +18,8 @@ def check_ffmpeg():
                                stderr=subprocess.PIPE, 
                                text=True, 
                                encoding='utf-8',
-                               errors='replace')
+                               errors='replace',
+                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         if result.returncode == 0:
             logging.info(f"FFmpeg已安装: {result.stdout.splitlines()[0]}")
             return True
@@ -38,7 +39,8 @@ def check_ffmpeg_python():
     except ImportError:
         logging.warning("ffmpeg-python未安装，尝试安装...")
         try:
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'ffmpeg-python'])
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'ffmpeg-python'],
+                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             logging.info("ffmpeg-python安装成功")
             return True
         except Exception as e:

@@ -67,22 +67,35 @@ class YtDownloader:
         # 不再通过callback重复输出，由主窗口统一处理控制台重定向
     
     def cancel_download(self):
-        """取消当前下载任务"""
+        """
+        取消正在进行的下载
+        """
+        self.debug("尝试取消下载...")
         self.is_cancelled = True
         
-        # 终止当前进程
-        if self.download_process:
+        # 终止下载进程
+        if self.download_process and self.download_process.poll() is None:
+            self.debug(f"终止下载进程 PID={self.download_process.pid}")
             try:
-                if sys.platform == 'win32':
-                    # Windows系统使用taskkill强制终止进程树
-                    subprocess.call(['taskkill', '/F', '/T', '/PID', str(self.download_process.pid)])
-                else:
-                    # Unix系统直接发送SIGTERM信号
-                    os.killpg(os.getpgid(self.download_process.pid), signal.SIGTERM)
+                if os.name == 'nt':  # Windows系统
+                    # 使用taskkill强制终止进程及其子进程
+                    subprocess.call(
+                        ['taskkill', '/F', '/T', '/PID', str(self.download_process.pid)],
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
+                else:  # 类Unix系统
+                    self.download_process.terminate()
+                    # 给进程一点时间来终止
+                    time.sleep(0.5)
+                    if self.download_process.poll() is None:
+                        # 如果进程没有终止，强制杀死它
+                        self.download_process.kill()
+                
+                self.debug("下载已取消")
             except Exception as e:
-                self.debug(f"取消下载时出错: {str(e)}")
-        
-        self.download_process = None
+                self.debug(f"取消下载时发生错误: {str(e)}")
+        else:
+            self.debug("没有正在进行的下载进程")
     
     def get_video_info(self, url: str, use_cookies=False, browser=None) -> Dict[str, Any]:
         """
@@ -132,7 +145,8 @@ class YtDownloader:
                     stderr=subprocess.PIPE,
                     text=True,
                     encoding='utf-8',  # 明确指定编码
-                    errors='replace'  # 遇到无法解码的字符时替换
+                    errors='replace',  # 遇到无法解码的字符时替换
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 )
                 self.processes.append(process)
                 
@@ -305,7 +319,7 @@ class YtDownloader:
                     text=True,
                     encoding='utf-8',  # 明确指定编码
                     errors='replace',  # 遇到无法解码的字符时替换
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 )
                 
                 # 等待字幕下载完成
@@ -358,7 +372,7 @@ class YtDownloader:
                     text=True,
                     encoding='utf-8',  # 明确指定编码
                     errors='replace',  # 遇到无法解码的字符时替换
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 )
                 
                 # 等待缩略图下载完成
@@ -421,7 +435,7 @@ class YtDownloader:
                 text=True,
                 encoding='utf-8',  # 明确指定编码
                 errors='replace',  # 遇到无法解码的字符时替换
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
                 bufsize=1  # 使用行缓冲
             )
             
@@ -541,7 +555,7 @@ class YtDownloader:
     def get_version(self) -> str:
         """获取yt-dlp版本号"""
         cmd = [self.ytdlp_path, "--version"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         return result.stdout.strip() if result.returncode == 0 else "未知"
     
     def get_video_formats(self, url: str, use_cookies=False, browser=None) -> str:
@@ -584,7 +598,8 @@ class YtDownloader:
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding='utf-8',  # 明确指定编码
-                errors='replace'  # 遇到无法解码的字符时替换
+                errors='replace',  # 遇到无法解码的字符时替换
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             self.processes.append(process)
             

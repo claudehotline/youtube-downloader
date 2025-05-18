@@ -126,7 +126,8 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
                 text=True,
                 encoding='utf-8',  # 明确指定编码
                 errors='replace',  # 遇到无法解码的字符时替换
-                timeout=5  # 设置超时，避免无限等待
+                timeout=5,  # 设置超时，避免无限等待
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             if ffmpeg_version.returncode != 0:
                 logging.error("ffmpeg命令不可用，请确保已安装ffmpeg并添加到PATH中")
@@ -146,7 +147,8 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
                     text=True,
                     encoding='utf-8',
                     errors='replace',
-                    timeout=5
+                    timeout=5,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 )
                 
                 if options['video_codec'] not in nvenc_check.stdout:
@@ -489,3 +491,59 @@ def convert_webm_to_mp4(webm_file_path, progress_callback=None, options=None):
             progress_callback(0, f"转换失败: {str(e)}")
             
         return webm_file_path 
+
+# 检查系统中的NVIDIA NVENC编码器支持情况
+def check_nvidia_encoder():
+    """
+    检查系统中是否有可用的NVIDIA编码器
+    
+    Returns:
+        list: 可用的NVIDIA编码器列表
+    """
+    try:
+        # 查询系统中的ffmpeg编码器
+        ffmpeg_version = subprocess.run(
+            ['ffmpeg', '-encoders'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        )
+        
+        # 如果查询成功
+        if ffmpeg_version.returncode == 0:
+            # 解析输出找出NVIDIA编码器
+            output = ffmpeg_version.stdout
+            nvidia_encoders = []
+            
+            # 查找NVIDIA编码器
+            for line in output.splitlines():
+                if 'nvenc' in line and 'V' in line[:5]:  # 视频编码器以V开头
+                    codec_name = line.split()[1]
+                    nvidia_encoders.append(codec_name)
+            
+            # 检查是否有可用的GPU
+            if nvidia_encoders:
+                logging.info(f"检测到NVIDIA编码器: {', '.join(nvidia_encoders)}")
+                
+                # 检查系统是否有可用的NVIDIA GPU
+                nvenc_check = subprocess.run(
+                    ['nvidia-smi', '-L'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                )
+                
+                if nvenc_check.returncode == 0:
+                    gpu_count = len(nvenc_check.stdout.strip().split('\n'))
+                    logging.info(f"检测到{gpu_count}个NVIDIA GPU")
+                    return nvidia_encoders
+            
+            return []
+            
+    except Exception as e:
+        logging.warning(f"检查NVIDIA编码器失败: {str(e)}")
+        return [] 
