@@ -10,6 +10,9 @@ import sqlite3
 class ConvertDialog(QDialog):
     """视频格式转换对话框，用于显示转换进度"""
     
+    # 添加一个信号用于发送日志消息
+    log_message = Signal(str, bool, bool)  # 消息, 是否错误, 是否调试信息
+    
     def __init__(self, file_path, parent=None):
         super().__init__(parent)
         self.file_path = file_path
@@ -17,6 +20,11 @@ class ConvertDialog(QDialog):
         self.convert_thread = None
         self.is_finished = False
         
+        # 设置日志
+        self.parent_window = parent
+        while self.parent_window and not hasattr(self.parent_window, 'log_message'):
+            self.parent_window = self.parent_window.parent()
+            
         self.setWindowTitle("视频格式转换")
         self.setMinimumWidth(400)
         self.setup_ui()
@@ -39,8 +47,26 @@ class ConvertDialog(QDialog):
                 return record['id']
         except Exception as e:
             logging.error(f"查询记录ID失败: {str(e)}")
+            self.add_log(f"查询记录ID失败: {str(e)}", error=True)
         
         return None
+    
+    def add_log(self, message, error=False, debug=False):
+        """添加日志，会同时记录到日志文件和发送到主窗口"""
+        # 记录到日志文件
+        if error:
+            logging.error(message)
+        elif debug:
+            logging.debug(message)
+        else:
+            logging.info(message)
+        
+        # 发送到主窗口的日志
+        if hasattr(self.parent_window, 'log_message'):
+            self.parent_window.log_message(message, error, debug)
+        
+        # 发送信号
+        self.log_message.emit(message, error, debug)
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -89,6 +115,10 @@ class ConvertDialog(QDialog):
         """开始转换过程"""
         self.status_label.setText("正在初始化转换...")
         
+        # 添加日志
+        file_name = os.path.basename(self.file_path)
+        self.add_log(f"开始将WebM转换为MP4: {file_name}")
+        
         # 创建转换选项
         convert_options = {
             'video_codec': 'av1_nvenc',   # 使用NVIDIA GPU加速AV1编码器
@@ -119,10 +149,18 @@ class ConvertDialog(QDialog):
     def on_convert_progress(self, message):
         """处理转换进度更新"""
         self.status_label.setText(message)
+        
+        # 添加重要进度消息到日志
+        if "初始化" in message or "开始转换" in message or "编码器" in message:
+            self.add_log(f"转换进度: {message}")
     
     def on_convert_percent(self, percent):
         """处理转换百分比更新"""
         self.progress_bar.setValue(percent)
+        
+        # 添加每25%的进度到日志
+        if percent > 0 and percent % 25 == 0:
+            self.add_log(f"转换进度: {percent}%")
     
     def on_convert_finished(self, success, message, file_path):
         """处理转换完成"""
@@ -143,16 +181,21 @@ class ConvertDialog(QDialog):
                 record_id=self.record_id
             )
             
+            # 记录转换成功的日志
+            file_name = os.path.basename(file_path)
+            self.add_log(f"视频转换成功: {file_name}")
+            
             # 直接删除原始webm文件
             try:
                 if os.path.exists(webm_file):
                     os.remove(webm_file)
                     self.status_label.setText("转换完成！已自动删除WebM文件。")
-                    logging.info(f"已自动删除原始WebM文件: {webm_file}")
+                    self.add_log(f"已自动删除原始WebM文件: {os.path.basename(webm_file)}")
                 else:
                     self.status_label.setText("转换完成！")
             except Exception as e:
                 logging.error(f"删除原始文件失败: {e}")
+                self.add_log(f"删除原始文件失败: {str(e)}", error=True)
                 self.status_label.setText("转换完成！但无法删除原始WebM文件。")
         else:
             # 转换失败，更新数据库
@@ -164,6 +207,9 @@ class ConvertDialog(QDialog):
                 record_id=self.record_id
             )
             
+            # 记录转换失败的日志
+            self.add_log(f"视频转换失败: {message}", error=True)
+            
             self.title_label.setText("<b>转换失败</b>")
             self.status_label.setText(f"错误: {message}")
     
@@ -174,6 +220,9 @@ class ConvertDialog(QDialog):
             self.cancel_button.setEnabled(False)
             self.progress_bar.setRange(0, 0)  # 设置进度条为未确定状态
             
+            # 记录取消操作到日志
+            self.add_log("用户取消了视频转换")
+            
             # 发送取消信号到线程
             self.convert_thread.cancel()
             
@@ -181,13 +230,13 @@ class ConvertDialog(QDialog):
             if self.convert_thread.process and self.convert_thread.process.poll() is None:
                 try:
                     pid = self.convert_thread.process.pid
-                    logging.info(f"尝试终止进程 PID:{pid}")
+                    self.add_log(f"尝试终止进程 PID:{pid}")
                     if os.name == 'nt':
                         os.system(f'TASKKILL /F /PID {pid} /T')
                     else:
                         os.system(f'kill -9 {pid}')
                 except Exception as e:
-                    logging.error(f"终止进程失败: {str(e)}")
+                    self.add_log(f"终止进程失败: {str(e)}", error=True)
     
     def closeEvent(self, event):
         """处理对话框关闭事件"""
