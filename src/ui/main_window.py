@@ -326,8 +326,43 @@ class MainWindow(QMainWindow):
         else:
             self.log_message(f"转换失败: {message}", error=True)
         
+        # 确保信号断开操作在完全完成后执行
+        try:
+            # 使用QTimer延迟断开信号连接，避免线程间的冲突
+            QTimer.singleShot(100, self.disconnect_convert_signals)
+        except Exception as e:
+            logging.error(f"断开信号时出错: {str(e)}")
+        
         # 重置进度记录
         self.last_logged_percent = 0
+    
+    def disconnect_convert_signals(self):
+        """安全断开转换线程的信号连接"""
+        try:
+            if hasattr(self, 'download_page') and hasattr(self.download_page, 'convert_thread'):
+                convert_thread = self.download_page.convert_thread
+                
+                # 先检查信号是否仍然连接
+                if convert_thread:
+                    try:
+                        if convert_thread.convert_progress.receivers(self.on_convert_progress) > 0:
+                            convert_thread.convert_progress.disconnect(self.on_convert_progress)
+                    except Exception:
+                        pass  # 忽略断开失败的情况
+                    
+                    try:
+                        if convert_thread.convert_percent.receivers(self.on_convert_percent) > 0:
+                            convert_thread.convert_percent.disconnect(self.on_convert_percent)
+                    except Exception:
+                        pass
+                    
+                    try:
+                        if convert_thread.convert_finished.receivers(self.on_convert_finished) > 0:
+                            convert_thread.convert_finished.disconnect(self.on_convert_finished)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logging.error(f"断开转换线程信号时发生错误: {str(e)}")
     
     @Slot()
     def cancel_fetch_info(self):

@@ -295,18 +295,52 @@ class DownloadPage(QWidget):
             # 添加转换取消的直观反馈
             self.progress_bar.setRange(0, 0)  # 设置为未确定状态，显示滚动条
             
+            # 日志记录取消请求
+            logging.info("用户点击取消按钮，正在强制终止转换")
+            
+            # 立即发出取消信号
+            if self.convert_thread.process and self.convert_thread.process.poll() is None:
+                try:
+                    # 直接使用os命令终止进程
+                    pid = self.convert_thread.process.pid
+                    logging.info(f"立即使用OS命令终止进程 PID:{pid}")
+                    if os.name == 'nt':
+                        os.system(f'TASKKILL /F /PID {pid} /T')
+                    else:
+                        os.system(f'kill -9 {pid}')
+                except Exception as e:
+                    logging.error(f"使用OS命令终止进程失败: {str(e)}")
+            
             # 调用转换线程的取消方法
-            self.convert_thread.cancel()  # 调用转换线程的取消方法
+            self.convert_thread.cancel()
+            
+            # 如果在3秒内转换线程仍在运行，强制终止它
+            QTimer.singleShot(3000, self.force_stop_convert_thread)
             
             # 设置一个定时器定期检查取消状态
             self.check_cancel_timer = QTimer(self)
             self.check_cancel_timer.timeout.connect(self.check_convert_cancellation)
-            self.check_cancel_timer.start(500)  # 每500毫秒检查一次
+            self.check_cancel_timer.start(300)  # 每300毫秒检查一次
             
             return  # 提前返回，剩下的由定时器处理
         
         # 取消下载进程
         self.cancel_download_requested.emit()
+    
+    def force_stop_convert_thread(self):
+        """强制终止转换线程"""
+        if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.isRunning():
+            logging.warning("转换线程3秒后仍在运行，强制终止")
+            self.convert_thread.terminate()  # 强制终止线程
+            self.convert_thread.wait(1000)   # 等待最多1秒
+            
+            # 重置UI状态
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.status_label.setText("视频转换已强制终止")
+            self.progress_detail_label.setText("")
+            self.download_button.setEnabled(True)
+            self.cancel_button.setEnabled(True)
     
     def check_convert_cancellation(self):
         """检查转换取消状态"""
@@ -318,14 +352,38 @@ class DownloadPage(QWidget):
             self.status_label.setText("视频转换已取消")
             self.progress_detail_label.setText("")
             self.download_button.setEnabled(True)
+            self.cancel_button.setEnabled(True)
         elif hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.is_canceled:
             # 转换已标记为取消，但可能仍在处理资源清理
             self.status_label.setText("转换取消中...")
             self.progress_detail_label.setText("正在清理资源，可能需要几秒钟...")
+            
+            # 如果进程仍在运行，再次尝试终止
+            if self.convert_thread.process and self.convert_thread.process.poll() is None:
+                try:
+                    pid = self.convert_thread.process.pid
+                    logging.info(f"再次尝试终止顽固进程 PID:{pid}")
+                    if os.name == 'nt':
+                        os.system(f'TASKKILL /F /PID {pid} /T')
+                    else:
+                        os.system(f'kill -9 {pid}')
+                except Exception as e:
+                    logging.error(f"再次终止进程失败: {str(e)}")
         else:
             # 尝试再次取消
             self.convert_thread.cancel()
             self.status_label.setText("再次尝试终止转换进程...")
+            
+            # 计数检查次数，如果超过10次(3秒)仍未取消成功，强制终止线程
+            if not hasattr(self, 'cancel_check_count'):
+                self.cancel_check_count = 0
+            self.cancel_check_count += 1
+            
+            if self.cancel_check_count > 10:
+                logging.warning("多次取消尝试失败，强制终止线程")
+                self.force_stop_convert_thread()
+                self.check_cancel_timer.stop()
+                self.cancel_check_count = 0
     
     def start_loading_animation(self):
         """启动加载动画"""
