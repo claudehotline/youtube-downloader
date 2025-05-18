@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, 
                               QStackedWidget, QPushButton, QVBoxLayout,
                               QStyle, QMessageBox, QApplication)
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QTimer
 import logging
 import os
 
