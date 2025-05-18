@@ -96,6 +96,8 @@ class MainWindow(QMainWindow):
         # 连接下载历史页面的信号
         self.download_history_page.delete_history_requested.connect(self.on_delete_history)
         self.download_history_page.clear_all_requested.connect(self.on_clear_all_history)
+        self.download_history_page.redownload_requested.connect(self.on_redownload_requested)
+        self.download_history_page.continue_download_requested.connect(self.on_continue_download_requested)
         
         # 将页面添加到堆叠部件
         self.stacked_widget.addWidget(self.download_page)  # 索引0 - 下载页面
@@ -528,3 +530,46 @@ class MainWindow(QMainWindow):
         """处理清空所有历史记录请求"""
         # 这个方法只是接收信号，实际清空工作在下载历史页面内完成
         pass
+
+    @Slot(dict)
+    def on_redownload_requested(self, record):
+        """处理重新下载请求"""
+        # 记录日志
+        self.log_message(f"从历史记录重新下载: {record['title']}")
+        
+        # 设置URL并获取视频信息
+        self.download_page.url_input.setText(record['url'])
+        
+        # 设置预设格式
+        self.download_page.set_preset_formats(
+            video_format=record['video_format'],
+            audio_format=record['audio_format'],
+            subtitles=record['subtitles'].split(',') if record['subtitles'] else []
+        )
+        
+        # 如果有视频ID，直接填充已有信息
+        if record['video_id'] and record['title']:
+            # 触发获取视频信息
+            self.fetch_video_info(record['url'], False, None)
+        else:
+            # 没有足够信息，重新获取
+            self.fetch_video_info(record['url'], False, None)
+    
+    @Slot(dict)
+    def on_continue_download_requested(self, record):
+        """处理继续下载请求"""
+        # 记录日志
+        self.log_message(f"继续下载: {record['title']}")
+        
+        # 设置URL并获取视频信息
+        self.download_page.url_input.setText(record['url'])
+        
+        # 设置预设格式
+        self.download_page.set_preset_formats(
+            video_format=record['video_format'],
+            audio_format=record['audio_format'],
+            subtitles=record['subtitles'].split(',') if record['subtitles'] else []
+        )
+        
+        # 触发获取视频信息的流程
+        self.fetch_video_info(record['url'], False, None)

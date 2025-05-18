@@ -14,6 +14,8 @@ from src.db.download_history import DownloadHistoryDB
 class DownloadHistoryPage(QWidget):
     delete_history_requested = Signal(int)  # 单个记录ID
     clear_all_requested = Signal()
+    redownload_requested = Signal(dict)  # 发送下载记录信息
+    continue_download_requested = Signal(dict)  # 发送下载记录信息
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -262,10 +264,27 @@ class DownloadHistoryPage(QWidget):
         if not selected_rows:
             return
         
+        # 获取选中行的记录
+        row = selected_rows[0].row()
+        record_id = self.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        record = self.db.get_download_by_id(record_id)
+        if not record:
+            return
+        
         # 创建菜单动作
         view_action = QAction("查看详情", self)
         open_folder_action = QAction("打开所在文件夹", self)
         delete_action = QAction("删除记录", self)
+        
+        # 根据状态添加重新下载或继续下载选项
+        if record['status'] == '完成':
+            redownload_action = QAction("重新下载", self)
+            redownload_action.triggered.connect(lambda: self.on_redownload_triggered(record))
+            menu.addAction(redownload_action)
+        elif record['status'] in ['失败', '已取消']:
+            continue_action = QAction("继续下载", self)
+            continue_action.triggered.connect(lambda: self.on_continue_download_triggered(record))
+            menu.addAction(continue_action)
         
         # 添加动作到菜单
         menu.addAction(view_action)
@@ -421,4 +440,32 @@ class DownloadHistoryPage(QWidget):
             hours = seconds // 3600
             minutes = (seconds % 3600) // 60
             secs = seconds % 60
-            return f"{hours}时{minutes}分{secs}秒" 
+            return f"{hours}时{minutes}分{secs}秒"
+    
+    def on_redownload_triggered(self, record):
+        """处理重新下载请求"""
+        reply = QMessageBox.question(
+            self, "确认重新下载", 
+            f"确定要重新下载【{record['title']}】吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # 发送信号，传递记录信息
+            self.redownload_requested.emit(record)
+            # 切换到下载页面
+            self.parent().switch_page(0)  # 假设下载页面的索引是0
+    
+    def on_continue_download_triggered(self, record):
+        """处理继续下载请求"""
+        reply = QMessageBox.question(
+            self, "确认继续下载", 
+            f"确定要继续下载【{record['title']}】吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # 发送信号，传递记录信息
+            self.continue_download_requested.emit(record)
+            # 切换到下载页面
+            self.parent().switch_page(0)  # 假设下载页面的索引是0 

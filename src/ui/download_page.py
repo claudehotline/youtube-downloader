@@ -25,6 +25,9 @@ class DownloadPage(QWidget):
         self.thumbnail_data = None
         self.loading_timer = None
         self.loading_dots = 0
+        self.preset_video_format = None  # 预设视频格式
+        self.preset_audio_format = None  # 预设音频格式
+        self.preset_subtitles = []       # 预设字幕
         
         self.setup_ui()
     
@@ -430,91 +433,156 @@ class DownloadPage(QWidget):
         self.cancel_fetch_button.setEnabled(False)
     
     def update_video_info(self):
-        """更新界面上的视频信息"""
+        """更新视频信息显示"""
         if not self.video_info:
             return
         
-        # 更新视频基本信息
-        self.title_label.setText(f"标题: {self.video_info['title']}")
+        # 更新标题和其他信息
+        title = self.video_info.get('title', '未知标题')
+        self.title_label.setText(f"<b>标题:</b> {title}")
         
-        # 格式化时长
-        duration_secs = self.video_info.get('duration', 0)
-        hours, remainder = divmod(duration_secs, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if hours > 0:
-            duration_str = f"{int(hours)}:{int(minutes):02d}:{int(seconds):02d}"
+        duration = self.video_info.get('duration')
+        if duration:
+            minutes, seconds = divmod(duration, 60)
+            hours, minutes = divmod(minutes, 60)
+            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+            self.duration_label.setText(f"<b>时长:</b> {duration_str}")
         else:
-            duration_str = f"{int(minutes):02d}:{int(seconds):02d}"
+            self.duration_label.setText("<b>时长:</b> 未知")
         
-        self.duration_label.setText(f"时长: {duration_str}")
-        self.uploader_label.setText(f"上传者: {self.video_info.get('uploader', '未知')}")
+        uploader = self.video_info.get('uploader', '未知')
+        self.uploader_label.setText(f"<b>上传者:</b> {uploader}")
         
-        # 加载缩略图
+        # 加载封面
         self.thumbnail_url = self.video_info.get('thumbnail')
         if self.thumbnail_url:
             try:
-                response = requests.get(self.thumbnail_url)
+                response = requests.get(self.thumbnail_url, stream=True)
                 if response.status_code == 200:
                     self.thumbnail_data = response.content
-                    image = QImage.fromData(self.thumbnail_data)
-                    pixmap = QPixmap.fromImage(image)
-                    self.thumbnail_label.setPixmap(pixmap.scaled(
-                        self.thumbnail_label.size(), 
-                        Qt.KeepAspectRatio, 
-                        Qt.SmoothTransformation
-                    ))
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(self.thumbnail_data)
+                    pixmap = pixmap.scaled(360, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.thumbnail_label.setPixmap(pixmap)
                     self.thumbnail_label.setStyleSheet("")
-            except Exception:
-                self.thumbnail_label.setText("无法加载缩略图")
-                self.thumbnail_label.setStyleSheet("color: red;")
+                else:
+                    self.thumbnail_label.setText("无法加载封面")
+                    self.thumbnail_label.setStyleSheet("color: #888888;")
+            except Exception as e:
+                self.thumbnail_label.setText(f"加载封面失败: {str(e)}")
+                self.thumbnail_label.setStyleSheet("color: #888888;")
+        else:
+            self.thumbnail_label.setText("无封面")
+            self.thumbnail_label.setStyleSheet("color: #888888;")
         
-        # 清空并启用格式选择框
+        # 清空和更新格式选择
         self.video_format_combo.clear()
-        self.video_format_combo.setEnabled(True)
         self.audio_format_combo.clear()
-        self.audio_format_combo.setEnabled(True)
         
-        # 添加"不下载"选项
+        # 添加"不下载视频"选项
         self.video_format_combo.addItem("不下载视频", "")
+        
+        # 添加"不下载音频"选项
         self.audio_format_combo.addItem("不下载音频", "")
         
-        # 分别提取视频和音频格式
-        formats = self.video_info.get('formats', [])
+        # 获取并排序视频和音频格式
+        video_formats = []
+        audio_formats = []
         
-        # 添加视频格式
-        for fmt in formats:
+        # 提取视频和音频格式信息
+        for fmt in self.video_info.get('formats', []):
             format_id = fmt.get('format_id', '')
+            # 忽略最佳格式
+            if format_id == 'best' or format_id == 'worst':
+                continue
+                
             ext = fmt.get('ext', '')
-            resolution = fmt.get('resolution', 'N/A')
-            vcodec = fmt.get('vcodec', 'none')
+            format_note = fmt.get('format_note', '')
             
-            # 只处理有视频的格式
-            if vcodec != 'none':
-                format_desc = f"[{format_id}] {resolution} ({ext})"
-                self.video_format_combo.addItem(format_desc, format_id)
-        
-        # 添加音频格式
-        for fmt in formats:
-            format_id = fmt.get('format_id', '')
-            ext = fmt.get('ext', '')
-            acodec = fmt.get('acodec', 'none')
-            abr = fmt.get('abr', 'N/A')
+            # 检查是否有视频或音频流
+            is_video = fmt.get('vcodec', 'none') != 'none'
+            is_audio = fmt.get('acodec', 'none') != 'none'
             
-            # 只处理有音频的格式
-            if acodec != 'none':
-                format_desc = f"[{format_id}] {abr}k ({ext})"
-                self.audio_format_combo.addItem(format_desc, format_id)
+            if is_video and not is_audio:
+                # 纯视频流
+                resolution = fmt.get('resolution', 'unknown')
+                fps = fmt.get('fps', '')
+                fps_str = f" {fps}fps" if fps else ""
+                vcodec = fmt.get('vcodec', 'unknown')
+                bitrate = fmt.get('tbr', 0)
+                bitrate_str = f" {int(bitrate)}kbps" if bitrate else ""
+                
+                format_display = f"{resolution}{fps_str} [{ext}] ({format_note}{bitrate_str} - {vcodec})"
+                video_formats.append((format_id, format_display, fmt.get('filesize', 0), resolution))
+            
+            elif is_audio and not is_video:
+                # 纯音频流
+                acodec = fmt.get('acodec', 'unknown')
+                bitrate = fmt.get('abr', 0) or fmt.get('tbr', 0)
+                bitrate_str = f" {int(bitrate)}kbps" if bitrate else ""
+                
+                format_display = f"{format_note}{bitrate_str} [{ext}] ({acodec})"
+                audio_formats.append((format_id, format_display, fmt.get('filesize', 0)))
         
-        # 更新字幕选择
+        # 对视频格式按分辨率排序（从高到低）
+        video_formats.sort(key=lambda x: (0 if isinstance(x[3], str) else x[3]), reverse=True)
+        
+        # 对音频格式按文件大小排序（从大到小，假设更大意味着更高质量）
+        audio_formats.sort(key=lambda x: x[2] or 0, reverse=True)
+        
+        # 添加视频格式到下拉框
+        preset_video_index = 0
+        for i, (format_id, format_display, _, _) in enumerate(video_formats):
+            self.video_format_combo.addItem(format_display, format_id)
+            # 如果有预设格式且匹配当前格式ID，记录索引
+            if self.preset_video_format and format_id == self.preset_video_format:
+                preset_video_index = i + 1  # +1 因为我们添加了"不下载视频"选项
+        
+        # 添加音频格式到下拉框
+        preset_audio_index = 0
+        for i, (format_id, format_display, _) in enumerate(audio_formats):
+            self.audio_format_combo.addItem(format_display, format_id)
+            # 如果有预设格式且匹配当前格式ID，记录索引
+            if self.preset_audio_format and format_id == self.preset_audio_format:
+                preset_audio_index = i + 1  # +1 因为我们添加了"不下载音频"选项
+        
+        # 清空并更新字幕列表
         self.subtitle_list.clear()
-        self.subtitle_list.setEnabled(True)
+        preset_subtitle_indices = []
         
+        # 添加字幕选项
         subtitles = self.video_info.get('subtitles', {})
-        for lang_code, subtitle_info in subtitles.items():
-            language = subtitle_info[0].get('name', lang_code)
-            item_text = f"{language} ({lang_code})"
-            self.subtitle_list.addItem(item_text)
-            self.subtitle_list.item(self.subtitle_list.count()-1).setData(Qt.UserRole, lang_code)
+        for i, (lang_code, _) in enumerate(subtitles.items()):
+            display_name = f"{lang_code}"
+            item = QListWidgetItem(display_name)
+            item.setData(Qt.UserRole, lang_code)
+            self.subtitle_list.addItem(item)
+            
+            # 如果有预设字幕且匹配当前语言，记录索引
+            if self.preset_subtitles and lang_code in self.preset_subtitles:
+                preset_subtitle_indices.append(i)
+        
+        # 启用控件
+        self.video_format_combo.setEnabled(True)
+        self.audio_format_combo.setEnabled(True)
+        self.subtitle_list.setEnabled(True)
+        self.download_button.setEnabled(True)
+        
+        # 应用预设格式选择
+        if self.preset_video_format and preset_video_index > 0:
+            self.video_format_combo.setCurrentIndex(preset_video_index)
+            
+        if self.preset_audio_format and preset_audio_index > 0:
+            self.audio_format_combo.setCurrentIndex(preset_audio_index)
+            
+        # 选择预设字幕
+        for index in preset_subtitle_indices:
+            self.subtitle_list.item(index).setSelected(True)
+        
+        # 重置预设，防止影响下次操作
+        self.preset_video_format = None
+        self.preset_audio_format = None
+        self.preset_subtitles = []
     
     def update_progress(self, percent, message):
         """更新下载进度"""
@@ -661,4 +729,10 @@ class DownloadPage(QWidget):
             error_message = "WebM文件转换为MP4失败，但下载已完成"
             self.status_label.setText(error_message)
             self.status_label.setStyleSheet("color: red;")
-            logging.error(f"转换失败: {message}，文件路径: {file_path}") 
+            logging.error(f"转换失败: {message}，文件路径: {file_path}")
+
+    def set_preset_formats(self, video_format=None, audio_format=None, subtitles=None):
+        """设置预设的格式选项，用于重新下载或继续下载"""
+        self.preset_video_format = video_format
+        self.preset_audio_format = audio_format
+        self.preset_subtitles = subtitles or [] 
