@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                          QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                          QHeaderView, QAbstractItemView, QMenu, QMessageBox,
                          QLineEdit, QToolBar, QComboBox, QSizePolicy, QSpacerItem,
-                         QDialog, QDialogButtonBox, QTextEdit)
+                         QDialog, QDialogButtonBox, QTextEdit, QStyle)
 from PySide6.QtCore import Qt, Signal, QSize, QDateTime
 from PySide6.QtGui import QIcon, QAction
 import os
@@ -50,12 +50,12 @@ class DownloadHistoryPage(QWidget):
         
         # 刷新按钮
         self.refresh_btn = QPushButton("刷新")
-        self.refresh_btn.setIcon(self.style().standardIcon(self.style().SP_BrowserReload))
+        self.refresh_btn.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.refresh_btn.clicked.connect(self.load_download_history)
         
         # 清空历史按钮
         self.clear_btn = QPushButton("清空历史")
-        self.clear_btn.setIcon(self.style().standardIcon(self.style().SP_TrashIcon))
+        self.clear_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogDiscardButton))
         self.clear_btn.clicked.connect(self.on_clear_all_clicked)
         
         # 添加到工具栏

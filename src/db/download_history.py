@@ -14,10 +14,13 @@ class DownloadHistoryDB:
             db_path: 数据库文件路径，如果为None则使用默认路径
         """
         if db_path is None:
-            # 默认在应用数据目录创建数据库
-            app_data_dir = Path.home() / "AppData" / "Local" / "YouTubeDownloader"
-            os.makedirs(app_data_dir, exist_ok=True)
-            db_path = app_data_dir / "download_history.db"
+            # 获取项目根目录
+            project_root = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            
+            # 使用项目根目录下的data目录
+            data_dir = project_root / "data"
+            os.makedirs(data_dir, exist_ok=True)
+            db_path = data_dir / "download_history.db"
         
         self.db_path = str(db_path)
         self._create_tables()
