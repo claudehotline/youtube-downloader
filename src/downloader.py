@@ -410,12 +410,15 @@ class YtDownloader:
                     progress_callback(100, "下载完成")
                 return None
             
+            # 设置输出模板，使用UTF-8编码
+            output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
+            
             # 5. 下载视频
             # 基本参数
             cmd = [self.ytdlp_path, 
                    url, 
                    "--no-mtime",  # 不使用视频上传时间作为文件修改时间
-                   "-o", os.path.join(output_dir, "%(title)s.%(ext)s"),  # 设置输出路径
+                   "-o", output_template,  # 设置输出路径
                    "-N", str(threads)]  # 设置线程数
             
             # 添加断点续传参数，默认开启
@@ -467,9 +470,23 @@ class YtDownloader:
             speed_pattern = re.compile(r'(\d+\.\d+\s*\w+/s)')
             merge_pattern = re.compile(r'\[Merger\]|正在合并|Merging')
             
+            # 添加文件路径捕获模式
+            destination_pattern = re.compile(r'Destination:\s+(.*)')  # 匹配 "Destination: 文件路径"
+            download_dest_pattern = re.compile(r'\[download\]\s+Destination:\s+(.*)')  # 匹配 "[download] Destination: 文件路径"
+            merged_into_pattern = re.compile(r'\[Merger\].*?into\s+"(.*?)"')  # 匹配 "[Merger] ... into "文件路径""
+            
             # 上次进度更新值和时间
             last_percent = 0
             last_update_time = time.time()
+            
+            # 用于保存下载的文件路径
+            downloaded_file_path = None
+            
+            # 记录视频标题、ID和扩展名，用于后续构建文件路径
+            video_title = None
+            video_id = None
+            file_extension = None
+            merge_output_path = None
             
             # 读取输出并更新进度
             while self.download_process and not self.is_cancelled:
@@ -477,9 +494,79 @@ class YtDownloader:
                 if not line:
                     break
                 
+                line = line.strip()
+                
+                # 尝试捕获视频标题和ID信息
+                if "[info]" in line and "Downloading" in line and "format" not in line:
+                    try:
+                        # 尝试提取视频ID和标题
+                        match = re.search(r'\[info\] (.*): Downloading', line)
+                        if match:
+                            video_id = match.group(1).strip()
+                            self.debug(f"捕获到视频ID: {video_id}")
+                    except Exception as e:
+                        self.debug(f"解析视频ID时出错: {str(e)}")
+                
+                # 尝试获取视频标题
+                if "[Metadata]" in line and "title:" in line:
+                    try:
+                        # 尝试提取视频标题
+                        match = re.search(r'title:\s+(.*)', line)
+                        if match:
+                            video_title = match.group(1).strip()
+                            self.debug(f"捕获到视频标题: {video_title}")
+                            # 如果已知标题和输出目录，尝试构建可能的文件路径
+                            if video_title and output_dir:
+                                for ext in ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv']:
+                                    potential_path = os.path.join(output_dir, f"{video_title}.{ext}")
+                                    if os.path.exists(potential_path):
+                                        downloaded_file_path = potential_path
+                                        self.debug(f"根据标题找到文件: {downloaded_file_path}")
+                                        break
+                    except Exception as e:
+                        self.debug(f"解析视频标题时出错: {str(e)}")
+                
+                # 捕获合并输出路径
+                if "[Merger] Merging formats into" in line:
+                    try:
+                        merge_output_path = line.split("[Merger] Merging formats into")[1].strip().strip('"')
+                        self.debug(f"捕获到合并输出路径: {merge_output_path}")
+                        # 如果路径存在，直接使用它
+                        if os.path.exists(merge_output_path):
+                            downloaded_file_path = merge_output_path
+                    except:
+                        pass
+                
                 # 只记录重要的调试信息
                 if not any(pattern in line for pattern in ["[download]", "ETA", "Destination"]):
-                    self.debug(line.strip())
+                    self.debug(line)
+                
+                # 捕获下载目标路径
+                dest_match = destination_pattern.search(line)
+                if dest_match:
+                    potential_path = dest_match.group(1).strip()
+                    self.debug(f"发现下载目标路径: {potential_path}")
+                    # 保存最后一个目标路径
+                    if os.path.isabs(potential_path):  # 确保是绝对路径
+                        downloaded_file_path = potential_path
+                
+                # 捕获[download] Destination格式的路径
+                download_dest_match = download_dest_pattern.search(line)
+                if download_dest_match:
+                    potential_path = download_dest_match.group(1).strip()
+                    self.debug(f"发现下载目标路径: {potential_path}")
+                    # 保存最后一个目标路径
+                    if os.path.isabs(potential_path):  # 确保是绝对路径
+                        downloaded_file_path = potential_path
+                
+                # 捕获合并输出路径
+                merged_match = merged_into_pattern.search(line)
+                if merged_match:
+                    potential_path = merged_match.group(1).strip()
+                    self.debug(f"发现合并输出路径: {potential_path}")
+                    # 保存合并输出路径
+                    if os.path.isabs(potential_path):  # 确保是绝对路径
+                        downloaded_file_path = potential_path
                 
                 # 检查是否是下载进度信息
                 progress_match = progress_pattern.search(line)
@@ -528,31 +615,6 @@ class YtDownloader:
             if self.download_process:
                 self.download_process.wait()
             
-            # 如果下载成功，找到下载的文件
-            if self.download_process.returncode == 0 and not self.is_cancelled:
-                # 检查是否有输出的文件
-                output_glob_pattern = os.path.join(output_dir, "*.mp4")  # 先尝试mp4
-                output_files = glob.glob(output_glob_pattern)
-                
-                if not output_files:
-                    # 如果没有mp4文件，尝试查找webm文件
-                    output_glob_pattern = os.path.join(output_dir, "*.webm")
-                    output_files = glob.glob(output_glob_pattern)
-                
-                if not output_files:
-                    # 如果仍然没有找到，尝试查找所有常见视频文件格式
-                    for ext in ['mkv', 'avi', 'mov', 'flv', 'wmv', 'm4a', 'mp3', 'ogg', 'opus']:
-                        output_glob_pattern = os.path.join(output_dir, f"*.{ext}")
-                        output_files = glob.glob(output_glob_pattern)
-                        if output_files:
-                            break
-                
-                # 按照修改时间排序，获取最新的文件
-                if output_files:
-                    output_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                    downloaded_file_path = output_files[0]
-                    self.debug(f"下载完成，文件路径: {downloaded_file_path}")
-        
             # 如果被取消，返回取消消息
             if self.is_cancelled:
                 if progress_callback:
@@ -562,9 +624,38 @@ class YtDownloader:
             # 下载完成
             if progress_callback:
                 if downloaded_file_path:
-                    progress_callback(100, f"下载完成: {downloaded_file_path}")
+                    # 确保文件确实存在
+                    if os.path.exists(downloaded_file_path):
+                        progress_callback(100, f"下载完成, 路径: {downloaded_file_path}")
+                        self.debug(f"下载完成，返回文件路径: {downloaded_file_path}")
+                    else:
+                        # 尝试最后一次通过目录查找最新文件
+                        all_files = []
+                        for ext in ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv', 'wmv']:
+                            pattern = os.path.join(output_dir, f"*.{ext}")
+                            all_files.extend(glob.glob(pattern))
+                        
+                        if all_files:
+                            all_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                            downloaded_file_path = all_files[0]
+                            self.debug(f"通过目录查找最新文件: {downloaded_file_path}")
+                            progress_callback(100, f"下载完成, 路径: {downloaded_file_path}")
+                        else:
+                            progress_callback(100, "下载完成，但无法确定文件路径")
                 else:
-                    progress_callback(100, "下载完成")
+                    # 尝试最后一次查找
+                    all_files = []
+                    for ext in ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv', 'wmv']:
+                        pattern = os.path.join(output_dir, f"*.{ext}")
+                        all_files.extend(glob.glob(pattern))
+                    
+                    if all_files:
+                        all_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                        downloaded_file_path = all_files[0]
+                        self.debug(f"最后尝试查找文件: {downloaded_file_path}")
+                        progress_callback(100, f"下载完成, 路径: {downloaded_file_path}")
+                    else:
+                        progress_callback(100, "下载完成，但无法确定文件路径")
             
             return downloaded_file_path  # 返回下载的文件路径
             

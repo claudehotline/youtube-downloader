@@ -632,13 +632,25 @@ class DownloadPage(QWidget):
         self.progress_detail_label.setText("")
         
         if success:
-            # 检查是否需要将webm转换为mp4
-            if "路径:" in message and ".webm" in message:
-                # 提取文件路径
+            # 从消息中提取文件路径
+            file_path = None
+            if "路径:" in message:
                 file_path = message.split("路径:")[1].strip()
-                if os.path.exists(file_path) and file_path.endswith('.webm'):
+            
+            # 如果无法从消息中提取路径，尝试从下载线程获取
+            if not file_path and hasattr(self, 'download_thread') and self.download_thread and hasattr(self.download_thread, 'downloaded_file'):
+                file_path = self.download_thread.downloaded_file
+            
+            # 检查是否需要将非MP4文件转换为MP4
+            if file_path and os.path.exists(file_path):
+                # 获取文件扩展名
+                _, ext = os.path.splitext(file_path)
+                
+                # 如果不是MP4格式，需要转换
+                if ext.lower() != '.mp4':
                     # 显示转换中的状态
-                    self.status_label.setText("准备转换WebM为MP4格式...")
+                    file_type = ext.upper().lstrip('.')
+                    self.status_label.setText(f"准备转换{file_type}为MP4格式...")
                     self.progress_bar.setValue(0)  # 重置进度条
                     
                     # 重新启用取消按钮，确保用户可以取消转换
@@ -677,7 +689,7 @@ class DownloadPage(QWidget):
                         record = cursor.fetchone()
                         if record:
                             record_id = record['id']
-                            logging.info(f"找到匹配的记录ID: {record_id}，用于WebM到MP4的转换")
+                            logging.info(f"找到匹配的记录ID: {record_id}，用于{file_type}到MP4的转换")
                         conn.close()
                     except Exception as e:
                         logging.error(f"查询记录ID失败: {str(e)}")
@@ -696,7 +708,7 @@ class DownloadPage(QWidget):
                     self.download_button.setEnabled(False)
                     return  # 提前返回，等待转换完成
             
-            # 如果没有发生WebM转换，显示原始的成功消息并设置正常颜色
+            # 如果没有发生转换，显示原始的成功消息并设置正常颜色
             self.status_label.setText(message)
             self.status_label.setStyleSheet("")
         elif message != "下载已取消":
@@ -750,8 +762,14 @@ class DownloadPage(QWidget):
             return
         
         if success:
-            # 获取原始webm文件路径
-            webm_file = file_path.replace('.mp4', '.webm')
+            # 获取原始文件路径和扩展名
+            original_file = None
+            # 尝试查找原始文件，支持多种格式
+            for ext in ['.webm', '.mkv', '.avi', '.flv', '.mov']:
+                possible_file = file_path.replace('.mp4', ext)
+                if os.path.exists(possible_file):
+                    original_file = possible_file
+                    break
             
             # 更新数据库中的状态为"完成"，并更新为mp4文件路径
             db.update_conversion_status(
@@ -760,12 +778,12 @@ class DownloadPage(QWidget):
                 record_id=record_id
             )
             
-            # 直接删除原始webm文件，不再询问
+            # 直接删除原始文件，不再询问
             try:
-                if os.path.exists(webm_file):
-                    os.remove(webm_file)
+                if original_file and os.path.exists(original_file):
+                    os.remove(original_file)
                     converted_message = "下载并转换完成"
-                    logging.info(f"已自动删除原始WebM文件: {webm_file}")
+                    logging.info(f"已自动删除原始文件: {original_file}")
                 else:
                     converted_message = "下载并转换完成"
             except Exception as e:
@@ -784,7 +802,8 @@ class DownloadPage(QWidget):
             )
             
             # 转换失败显示错误信息，但不再弹出对话框
-            error_message = "WebM文件转换为MP4失败，但下载已完成"
+            file_type = os.path.splitext(file_path)[1].upper().lstrip('.')
+            error_message = f"{file_type}文件转换为MP4失败，但下载已完成"
             self.status_label.setText(error_message)
             self.status_label.setStyleSheet("color: red;")
             logging.error(f"转换失败: {message}，文件路径: {file_path}")

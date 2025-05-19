@@ -246,6 +246,10 @@ class ConvertThread(QThread):
                 success_message = f"转换完成，耗时: {elapsed_time:.2f}秒"
                 logging.info(success_message)
                 
+                # 确保发送100%进度
+                self.convert_percent.emit(100)
+                self.convert_progress.emit("转换完成")
+                
                 # 更新数据库中的文件路径为MP4
                 try:
                     from src.db.download_history import DownloadHistoryDB

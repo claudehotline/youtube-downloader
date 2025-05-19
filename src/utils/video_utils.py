@@ -400,6 +400,14 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                                 # 从共享变量获取进程引用
                                 current_process = process_ref['process']
                                 
+                                # 检查进程是否已经完成
+                                if current_process and current_process.poll() is not None:
+                                    if current_process.returncode == 0 and last_percent < 100:
+                                        # 进程正常完成但进度未到100%，强制发送100%
+                                        logger.info("进程已完成，发送100%进度")
+                                        handle_callback(100, "转换完成", current_process)
+                                    break
+                                
                                 # 获取文件当前位置
                                 where = f.tell()
                                 
@@ -426,7 +434,7 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                                         seconds = float(h) * 3600 + float(m) * 60 + float(s)
                                         
                                         # 计算进度百分比
-                                        percent = min(int((seconds / duration) * 100), 100)
+                                        percent = min(int((seconds / duration) * 100), 99)  # 最多到99%，留给完成信号
                                         
                                         # 仅在进度有变化时才更新
                                         if percent != last_percent:
