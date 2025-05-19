@@ -95,6 +95,15 @@ class DownloadThread(QThread):
                         output_path=self.output_path  # 可能为None
                     )
             
+            # 记录当前下载的记录ID
+            if self.download_record_id:
+                logging.info(f"下载线程已创建记录ID: {self.download_record_id}")
+            else:
+                logging.error("下载线程创建记录ID失败")
+                
+            # 初始化下载文件路径
+            self.downloaded_file = None
+            
             # 获取下载的文件路径
             downloaded_file = self.downloader.download(
                 self.video_url, 
@@ -108,6 +117,9 @@ class DownloadThread(QThread):
                 self.browser,
                 self.resume  # 传递断点续传参数
             )
+            
+            # 保存下载文件路径到类属性
+            self.downloaded_file = downloaded_file
             
             # 更新下载记录
             if self.download_record_id:
@@ -127,6 +139,7 @@ class DownloadThread(QThread):
                         webm_path = re.sub(r'\.[^.]+$', '.webm', downloaded_file)
                         if os.path.exists(webm_path):
                             downloaded_file = webm_path
+                            self.downloaded_file = downloaded_file  # 更新类属性
                     
                     self.db.update_download_status(
                         self.download_record_id, 

@@ -45,13 +45,13 @@ class DownloadHistoryPage(QWidget):
         """根据窗口大小调整列宽比例"""
         total_width = self.history_table.width() - 20  # 减去滚动条宽度
         
-        # 设置每列的宽度比例
-        self.history_table.setColumnWidth(0, int(total_width * 0.25))  # 标题列
-        self.history_table.setColumnWidth(1, int(total_width * 0.12))  # 格式列
-        self.history_table.setColumnWidth(2, int(total_width * 0.25))  # 路径列
-        self.history_table.setColumnWidth(3, int(total_width * 0.08))  # 大小列
-        self.history_table.setColumnWidth(4, int(total_width * 0.12))  # 时间列
-        self.history_table.setColumnWidth(5, int(total_width * 0.08))  # 耗时列
+        # 设置每列的宽度比例 (跳过ID列 - 索引0，因为它是隐藏的)
+        self.history_table.setColumnWidth(1, int(total_width * 0.25))  # 标题列
+        self.history_table.setColumnWidth(2, int(total_width * 0.12))  # 格式列
+        self.history_table.setColumnWidth(3, int(total_width * 0.25))  # 路径列
+        self.history_table.setColumnWidth(4, int(total_width * 0.08))  # 大小列
+        self.history_table.setColumnWidth(5, int(total_width * 0.12))  # 时间列
+        self.history_table.setColumnWidth(6, int(total_width * 0.08))  # 耗时列
         # 最后一列(状态)不需要设置，会自动伸展
     
     def setup_ui(self):
@@ -108,11 +108,14 @@ class DownloadHistoryPage(QWidget):
         self.history_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.history_table.customContextMenuRequested.connect(self.show_context_menu)
         
-        # 设置列
-        self.history_table.setColumnCount(7)
+        # 设置列（包含隐藏的ID列）
+        self.history_table.setColumnCount(8)
         self.history_table.setHorizontalHeaderLabels([
-            "视频标题", "格式", "输出路径", "大小", "下载时间", "耗时", "状态"
+            "ID", "视频标题", "格式", "输出路径", "大小", "下载时间", "耗时", "状态"
         ])
+        
+        # 隐藏ID列
+        self.history_table.hideColumn(0)
         
         # 设置列宽
         header = self.history_table.horizontalHeader()
@@ -143,7 +146,7 @@ class DownloadHistoryPage(QWidget):
         selected_ids = []
         for index in self.history_table.selectionModel().selectedRows():
             row = index.row()
-            item = self.history_table.item(row, 0)
+            item = self.history_table.item(row, 1)  # 现在标题是第2列 (索引1)
             if item:
                 selected_ids.append(item.data(Qt.ItemDataRole.UserRole))
         
@@ -173,10 +176,14 @@ class DownloadHistoryPage(QWidget):
         row_id_map = {}
         
         for i, record in enumerate(records):
+            # 数据库记录ID（隐藏列）
+            id_item = QTableWidgetItem(str(record['id']))
+            self.history_table.setItem(i, 0, id_item)
+            
             # 视频标题
             title_item = QTableWidgetItem(record['title'])
             title_item.setData(Qt.ItemDataRole.UserRole, record['id'])  # 存储记录ID
-            self.history_table.setItem(i, 0, title_item)
+            self.history_table.setItem(i, 1, title_item)
             
             # 记录行号与ID的映射
             row_id_map[record['id']] = i
@@ -189,16 +196,16 @@ class DownloadHistoryPage(QWidget):
                 if format_str:
                     format_str += " + "
                 format_str += f"音频:{record['audio_format']}"
-            self.history_table.setItem(i, 1, QTableWidgetItem(format_str))
+            self.history_table.setItem(i, 2, QTableWidgetItem(format_str))
             
             # 输出路径
             output_path = record['output_path'] or "未知"
-            self.history_table.setItem(i, 2, QTableWidgetItem(output_path))
+            self.history_table.setItem(i, 3, QTableWidgetItem(output_path))
             
             # 文件大小
             file_size = record['file_size'] or 0
             size_str = self.format_size(file_size) if file_size > 0 else "未知"
-            self.history_table.setItem(i, 3, QTableWidgetItem(size_str))
+            self.history_table.setItem(i, 4, QTableWidgetItem(size_str))
             
             # 下载时间
             start_time = record['start_time']
@@ -207,7 +214,7 @@ class DownloadHistoryPage(QWidget):
                 time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
             else:
                 time_str = "未知"
-            self.history_table.setItem(i, 4, QTableWidgetItem(time_str))
+            self.history_table.setItem(i, 5, QTableWidgetItem(time_str))
             
             # 耗时
             duration = record['duration']
@@ -222,7 +229,7 @@ class DownloadHistoryPage(QWidget):
                     duration_str = "中断"
                 else:
                     duration_str = "未知"
-            self.history_table.setItem(i, 5, QTableWidgetItem(duration_str))
+            self.history_table.setItem(i, 6, QTableWidgetItem(duration_str))
             
             # 状态
             status = record['status']
@@ -237,7 +244,7 @@ class DownloadHistoryPage(QWidget):
                 status_item.setForeground(Qt.GlobalColor.darkYellow)
             else:
                 status_item.setForeground(Qt.GlobalColor.blue)
-            self.history_table.setItem(i, 6, status_item)
+            self.history_table.setItem(i, 7, QTableWidgetItem(status_item))
         
         # 恢复选中项
         if selected_ids:
@@ -245,7 +252,7 @@ class DownloadHistoryPage(QWidget):
             for record_id in selected_ids:
                 if record_id in row_id_map:
                     row = row_id_map[record_id]
-                    index = self.history_table.model().index(row, 0)
+                    index = self.history_table.model().index(row, 1)  # 现在标题是第2列 (索引1)
                     selection_model.select(index, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
         
         # 恢复滚动位置
@@ -271,30 +278,26 @@ class DownloadHistoryPage(QWidget):
         """搜索框文本变化事件"""
         self.load_download_history()
     
-    def on_filter_changed(self):
-        """状态过滤器变化事件"""
-        self.load_download_history()
-    
-    def on_clear_all_clicked(self):
-        """清空全部历史点击事件"""
-        reply = QMessageBox.question(
-            self, "确认清空", "确定要清空所有下载历史记录吗？此操作不可恢复。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+    def on_filter_changed(self):        
+        """状态过滤器变化事件"""        
+        self.load_download_history()        
         
-        if reply == QMessageBox.StandardButton.Yes:
-            count = self.db.delete_all_downloads()
-            QMessageBox.information(self, "清空完成", f"已成功清空 {count} 条下载记录。")
-            self.load_download_history()
-            self.clear_all_requested.emit()
-    
-    def on_row_double_clicked(self, index):
-        """表格行双击事件"""
-        row = index.row()
-        record_id = self.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-        record = self.db.get_download_by_id(record_id)
-        
-        if record:
+    def on_clear_all_clicked(self):        
+        """清空全部历史点击事件"""        
+        reply = QMessageBox.question(self, "确认清空", "确定要清空所有下载历史记录吗？此操作不可恢复。", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)                
+        if reply == QMessageBox.StandardButton.Yes:            
+            count = self.db.delete_all_downloads()            
+            QMessageBox.information(self, "清空完成", f"已成功清空 {count} 条下载记录。")            
+            self.load_download_history()            
+            self.clear_all_requested.emit()        
+            
+    def on_row_double_clicked(self, index):        
+        """表格行双击事件"""        
+        row = index.row()        
+        # 直接从ID列获取记录ID (索引0)        
+        record_id = int(self.history_table.item(row, 0).text())        
+        record = self.db.get_download_by_id(record_id)                
+        if record:            
             self.show_record_details(record)
     
     def show_context_menu(self, position):
@@ -306,9 +309,10 @@ class DownloadHistoryPage(QWidget):
         if not selected_rows:
             return
         
-        # 获取选中行的记录
-        row = selected_rows[0].row()
-        record_id = self.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        # 获取选中行的记录        
+        row = selected_rows[0].row()        
+        # 直接从ID列获取记录ID       
+        record_id = int(self.history_table.item(row, 0).text())        
         record = self.db.get_download_by_id(record_id)
         if not record:
             return
@@ -364,9 +368,10 @@ class DownloadHistoryPage(QWidget):
         if not selected_rows:
             return
         
-        # 获取第一个选中行的记录ID
-        row = selected_rows[0].row()
-        record_id = self.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        # 获取第一个选中行的记录ID        
+        row = selected_rows[0].row()        
+        # 直接从ID列获取记录ID        
+        record_id = int(self.history_table.item(row, 0).text())        
         record = self.db.get_download_by_id(record_id)
         
         if record:
@@ -378,9 +383,10 @@ class DownloadHistoryPage(QWidget):
         if not selected_rows:
             return
         
-        # 获取第一个选中行的输出路径
-        row = selected_rows[0].row()
-        record_id = self.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        # 获取第一个选中行的输出路径        
+        row = selected_rows[0].row()        
+        # 直接从ID列获取记录ID        
+        record_id = int(self.history_table.item(row, 0).text())        
         record = self.db.get_download_by_id(record_id)
         
         if record and record['output_path'] and os.path.exists(os.path.dirname(record['output_path'])):
@@ -403,11 +409,12 @@ class DownloadHistoryPage(QWidget):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            # 执行删除
-            for index in selected_rows:
-                row = index.row()
-                record_id = self.history_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-                self.db.delete_download(record_id)
+            # 执行删除            
+            for index in selected_rows:                
+                row = index.row()                
+                # 直接从ID列获取记录ID                
+                record_id = int(self.history_table.item(row, 0).text())                
+                self.db.delete_download(record_id)                
                 self.delete_history_requested.emit(record_id)
             
             # 重新加载列表
@@ -554,8 +561,8 @@ class DownloadHistoryPage(QWidget):
             if reply == QMessageBox.StandardButton.No:
                 return
         
-        # 创建并显示转换对话框
-        dialog = ConvertDialog(webm_path, self)
+        # 创建并显示转换对话框，直接传递记录ID
+        dialog = ConvertDialog(webm_path, self, record_id=record['id'])
         dialog.exec()
         
         # 转换结束后刷新列表
@@ -575,4 +582,16 @@ class DownloadHistoryPage(QWidget):
         super().hideEvent(event)
         # 当页面隐藏时停止定时器，节省资源
         if hasattr(self, 'refresh_timer') and self.refresh_timer.isActive():
-            self.refresh_timer.stop() 
+            self.refresh_timer.stop()
+    
+    def get_selected_record_id(self):
+        """获取当前选中行的记录ID"""
+        selected_rows = self.history_table.selectionModel().selectedRows()
+        if not selected_rows:
+            return None
+        
+        row = selected_rows[0].row()
+        # 直接从ID列获取记录ID (索引0)
+        id_item = self.history_table.item(row, 0)
+        if id_item:
+            return int(id_item.text()) 

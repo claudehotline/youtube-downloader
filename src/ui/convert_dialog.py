@@ -13,10 +13,14 @@ class ConvertDialog(QDialog):
     # 添加一个信号用于发送日志消息
     log_message = Signal(str, bool, bool)  # 消息, 是否错误, 是否调试信息
     
-    def __init__(self, file_path, parent=None):
+    def __init__(self, file_path, parent=None, record_id=None):
         super().__init__(parent)
         self.file_path = file_path
-        self.record_id = self.get_record_id(file_path)
+        # 直接使用传入的record_id，不再尝试查询
+        self.record_id = record_id
+        if self.record_id is None:
+            logging.warning(f"转换对话框初始化时未提供记录ID，将无法更新数据库记录。文件: {file_path}")
+        
         self.convert_thread = None
         self.is_finished = False
         
@@ -31,25 +35,6 @@ class ConvertDialog(QDialog):
         
         # 自动开始转换
         self.start_conversion()
-    
-    def get_record_id(self, file_path):
-        """根据文件路径获取数据库记录ID"""
-        try:
-            db = DownloadHistoryDB()
-            conn = sqlite3.connect(db.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM download_history WHERE output_path = ?', (file_path,))
-            record = cursor.fetchone()
-            conn.close()
-            
-            if record:
-                return record['id']
-        except Exception as e:
-            logging.error(f"查询记录ID失败: {str(e)}")
-            self.add_log(f"查询记录ID失败: {str(e)}", error=True)
-        
-        return None
     
     def add_log(self, message, error=False, debug=False):
         """添加日志，会同时记录到日志文件和发送到主窗口"""

@@ -139,13 +139,13 @@ class DownloadHistoryDB:
             conn.commit()
     
     def update_conversion_status(self, file_path, status, error_message=None, record_id=None):
-        """根据文件路径或记录ID更新转换状态
+        """根据记录ID更新转换状态
         
         Args:
             file_path: 文件路径（webm或mp4）
             status: 新状态（完成 或 转换中断）
             error_message: 错误信息（如果有）
-            record_id: 记录ID，如果提供则优先使用
+            record_id: 记录ID，必须提供
             
         Returns:
             bool: 是否找到并更新了记录
@@ -160,29 +160,17 @@ class DownloadHistoryDB:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # 如果提供了record_id，直接使用它
-            if record_id:
-                cursor.execute('SELECT id, output_path FROM download_history WHERE id = ?', (record_id,))
-                record = cursor.fetchone()
-                if not record:
-                    logging.error(f"找不到指定ID的记录: {record_id}")
-                    return False
-                logging.info(f"使用指定的记录ID: {record_id}")
-            else:
-                # 尝试查找匹配的记录，使用更灵活的匹配方式
-                cursor.execute('''
-                SELECT id, output_path FROM download_history
-                WHERE output_path = ? OR output_path = ? OR 
-                      output_path LIKE ? OR output_path LIKE ?
-                ''', (webm_path, mp4_path, f"%{os.path.basename(webm_path)}", f"%{os.path.basename(mp4_path)}"))
+            # 必须提供record_id
+            if not record_id:
+                logging.error("更新转换状态失败：未提供记录ID")
+                return False
                 
-                record = cursor.fetchone()
-                if not record:
-                    logging.error(f"找不到匹配的记录，文件路径: {file_path}")
-                    # 不再自动选择最近的记录
-                    return False
-            
-            record_id = record[0]
+            # 使用record_id查询记录
+            cursor.execute('SELECT id, output_path FROM download_history WHERE id = ?', (record_id,))
+            record = cursor.fetchone()
+            if not record:
+                logging.error(f"找不到指定ID的记录: {record_id}")
+                return False
             
             # 获取当前时间戳
             current_time = int(time.time())

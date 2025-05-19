@@ -303,6 +303,22 @@ class MainWindow(QMainWindow):
     @Slot(bool, str)
     def download_complete(self, success, message):
         """下载完成处理"""
+        # 在调用download_page.download_complete之前，先从下载线程获取记录ID和文件路径
+        if hasattr(self, 'download_thread') and self.download_thread:
+            # 获取记录ID
+            record_id = getattr(self.download_thread, 'download_record_id', None)
+            if record_id:
+                # 直接设置到download_page的属性中
+                self.download_page.last_download_id = record_id
+                logging.info(f"主窗口保存下载记录ID: {record_id}")
+            
+            # 获取文件路径
+            file_path = getattr(self.download_thread, 'downloaded_file', None)
+            if file_path:
+                self.download_page.last_download_file = file_path
+                logging.info(f"主窗口保存下载文件路径: {file_path}")
+        
+        # 调用下载页面的下载完成处理
         self.download_page.download_complete(success, message)
         
         # 记录日志

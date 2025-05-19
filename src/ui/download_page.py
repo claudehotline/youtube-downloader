@@ -31,6 +31,8 @@ class DownloadPage(QWidget):
         self.preset_audio_format = None  # 预设音频格式
         self.preset_subtitles = []       # 预设字幕
         self.auto_start_download = False  # 自动开始下载标志
+        self.last_download_id = None      # 保存最近一次下载的记录ID
+        self.last_download_file = None    # 保存最近一次下载的文件路径
         
         self.setup_ui()
     
@@ -597,6 +599,19 @@ class DownloadPage(QWidget):
         """更新下载进度"""
         self.progress_bar.setValue(percent)
         
+        # 尽早从下载线程获取记录ID和文件路径，而不是等到下载完成
+        if hasattr(self, 'download_thread') and self.download_thread:
+            record_id = getattr(self.download_thread, 'download_record_id', None)
+            if record_id and record_id != self.last_download_id:
+                self.last_download_id = record_id
+                logging.info(f"进度更新时保存下载记录ID: {self.last_download_id}")
+            
+            # 获取下载文件路径(如果可用)
+            downloaded_file = getattr(self.download_thread, 'downloaded_file', None)
+            if downloaded_file and downloaded_file != self.last_download_file:
+                self.last_download_file = downloaded_file
+                logging.debug(f"进度更新时保存下载文件路径: {self.last_download_file}")
+        
         # 从消息中提取下载状态和详细信息
         if "下载中" in message:
             # 状态标签只显示简单状态
@@ -631,15 +646,32 @@ class DownloadPage(QWidget):
         self.cancel_button.setEnabled(False)  # 下载完成后停用取消按钮
         self.progress_detail_label.setText("")
         
-        if success:
-            # 从消息中提取文件路径
-            file_path = None
-            if "路径:" in message:
-                file_path = message.split("路径:")[1].strip()
+        # 关键修复：在线程引用可能消失前直接提取记录ID并存储为全局变量
+        if hasattr(self, 'download_thread') and self.download_thread:
+            thread_id = id(self.download_thread)  # 获取线程对象ID，用于日志跟踪
+            record_id = getattr(self.download_thread, 'download_record_id', None)
+            downloaded_file = getattr(self.download_thread, 'downloaded_file', None)
             
-            # 如果无法从消息中提取路径，尝试从下载线程获取
-            if not file_path and hasattr(self, 'download_thread') and self.download_thread and hasattr(self.download_thread, 'downloaded_file'):
-                file_path = self.download_thread.downloaded_file
+            logging.info(f"直接从下载线程(ID:{thread_id})获取: record_id={record_id}")
+            
+            # 更新类属性
+            if record_id is not None:
+                self.last_download_id = record_id
+                logging.info(f"成功保存下载记录ID: {self.last_download_id}")
+            
+            if downloaded_file:
+                self.last_download_file = downloaded_file
+                logging.info(f"成功保存下载文件路径: {self.last_download_file}")
+        else:
+            logging.error("下载完成时无法访问下载线程对象")
+        
+        if success:
+            # 从消息中提取文件路径（如果类属性中没有）
+            file_path = self.last_download_file
+            if not file_path and "路径:" in message:
+                file_path = message.split("路径:")[1].strip()
+                self.last_download_file = file_path
+                logging.info(f"从消息提取文件路径: {file_path}")
             
             # 检查是否需要将非MP4文件转换为MP4
             if file_path and os.path.exists(file_path):
@@ -676,23 +708,9 @@ class DownloadPage(QWidget):
                         'gpu': 0                      # 固定使用GPU 0
                     }
                     
-                    # 获取数据库中的记录ID
-                    record_id = None
-                    try:
-                        from src.db.download_history import DownloadHistoryDB
-                        db = DownloadHistoryDB()
-                        # 根据文件路径查询记录ID
-                        conn = sqlite3.connect(db.db_path)
-                        conn.row_factory = sqlite3.Row
-                        cursor = conn.cursor()
-                        cursor.execute('SELECT id FROM download_history WHERE output_path = ?', (file_path,))
-                        record = cursor.fetchone()
-                        if record:
-                            record_id = record['id']
-                            logging.info(f"找到匹配的记录ID: {record_id}，用于{file_type}到MP4的转换")
-                        conn.close()
-                    except Exception as e:
-                        logging.error(f"查询记录ID失败: {str(e)}")
+                    # 使用已保存的记录ID
+                    record_id = self.last_download_id
+                    logging.info(f"准备开始转换，记录ID: {record_id}, 文件: {file_path}")
                     
                     # 创建并启动转换线程
                     self.convert_thread = ConvertThread(file_path, options=convert_options, record_id=record_id)
