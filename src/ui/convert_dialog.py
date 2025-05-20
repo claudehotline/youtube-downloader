@@ -158,11 +158,11 @@ class ConvertDialog(QDialog):
             # 获取原始webm文件路径
             webm_file = file_path.replace('.mp4', '.webm')
             
-            # 更新数据库中的状态为"完成"，并更新为mp4文件路径
+            # 更新数据库中的状态为"转换完成"，并更新为mp4文件路径
             db = DownloadHistoryDB()
             db.update_conversion_status(
                 file_path=file_path,
-                status="完成",
+                status="转换完成",
                 record_id=self.record_id
             )
             

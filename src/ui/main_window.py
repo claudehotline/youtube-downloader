@@ -158,9 +158,20 @@ class MainWindow(QMainWindow):
         self.update_nav_button_style(0)
     
     def log_message(self, message, error=False, debug=False):
-        """添加消息到日志区域"""
-        if hasattr(self, 'history_page') and self.history_page:
-            self.history_page.add_log_message(message, error, debug)
+        """添加日志消息"""
+        # 跳过包含特定模式的消息以避免重复记录
+        skip_patterns = [
+            "下载进度: 0%", 
+            "尝试次数 #",
+            "执行命令:"
+        ]
+        
+        # 如果消息匹配跳过模式，则不记录
+        if any(pattern in message for pattern in skip_patterns):
+            return
+        
+        # 向历史页面添加消息
+        self.history_page.add_log_message(message, error, debug)
     
     def clear_log(self):
         """清除日志内容"""
@@ -267,7 +278,7 @@ class MainWindow(QMainWindow):
             resume  # 传递断点续传参数
         )
         
-        self.download_thread.progress_updated.connect(self.update_progress)
+        self.download_thread.progress_updated.connect(self.update_download_progress)
         self.download_thread.download_finished.connect(self.download_complete)
         self.download_thread.start()
     
@@ -284,39 +295,33 @@ class MainWindow(QMainWindow):
             # 延迟刷新下载历史列表，确保取消操作已完成
             QTimer.singleShot(500, self.refresh_download_history)
     
-    @Slot(int, str)
-    def update_progress(self, percent, message):
-        """更新下载进度"""
+    def update_download_progress(self, percent, message):
+        # 更新进度条
         self.download_page.update_progress(percent, message)
         
-        # 仅记录重要进度变化到日志，且避免重复记录
-        if percent > 0 and percent % 10 == 0:
-            # 确保当前百分比大于上次记录的百分比
-            if percent > self.last_logged_percent:
-                self.log_message(f"下载进度: {percent}% - {message}")
-                self.last_logged_percent = percent
-        
-        # 处理特殊消息，如取消下载或合并视频音频
-        if "取消" in message or "合并" in message:
-            self.log_message(message)
+        # 记录关键进度信息，避免产生过多日志
+        if percent % 10 == 0 or "下载完成" in message or "下载失败" in message or "合并" in message:
+            self.log_message(f"下载进度: {percent}% - {message}")
     
     @Slot(bool, str)
     def download_complete(self, success, message):
         """下载完成处理"""
-        # 在调用download_page.download_complete之前，先从下载线程获取记录ID和文件路径
+        # 连接下载线程的转换信号
         if hasattr(self, 'download_thread') and self.download_thread:
-            # 获取记录ID
-            record_id = getattr(self.download_thread, 'download_record_id', None)
-            if record_id:
-                # 直接设置到download_page的属性中
-                self.download_page.last_download_id = record_id
-                logging.info(f"主窗口保存下载记录ID: {record_id}")
+            # 断开旧的连接
+            try:
+                self.download_thread.convert_progress.disconnect()
+            except:
+                pass
             
-            # 获取文件路径
-            file_path = getattr(self.download_thread, 'downloaded_file', None)
-            if file_path:
-                self.download_page.last_download_file = file_path
-                logging.info(f"主窗口保存下载文件路径: {file_path}")
+            try:
+                self.download_thread.convert_finished.disconnect()
+            except:
+                pass
+            
+            # 连接转换信号
+            self.download_thread.convert_progress.connect(self.on_convert_progress_new)
+            self.download_thread.convert_finished.connect(self.on_convert_finished)
         
         # 调用下载页面的下载完成处理
         self.download_page.download_complete(success, message)
@@ -324,32 +329,6 @@ class MainWindow(QMainWindow):
         # 记录日志
         if success:
             self.log_message(f"下载完成: {message}")
-            
-            # 检查下载页面是否创建了转换线程，并连接信号
-            if hasattr(self.download_page, 'convert_thread') and self.download_page.convert_thread:
-                # 断开旧的连接，避免重复连接
-                try:
-                    self.download_page.convert_thread.convert_progress.disconnect(self.on_convert_progress)
-                except:
-                    pass
-                    
-                try:
-                    self.download_page.convert_thread.convert_percent.disconnect(self.on_convert_percent)
-                except:
-                    pass
-                    
-                try:
-                    self.download_page.convert_thread.convert_finished.disconnect(self.on_convert_finished)
-                except:
-                    pass
-                
-                # 重新连接信号
-                self.download_page.convert_thread.convert_progress.connect(self.on_convert_progress)
-                self.download_page.convert_thread.convert_percent.connect(self.on_convert_percent)
-                self.download_page.convert_thread.convert_finished.connect(self.on_convert_finished)
-                
-                # 记录视频转换开始的日志
-                self.log_message(f"开始视频格式转换: WebM → MP4")
         else:
             self.log_message(f"下载失败: {message}", error=True)
         
@@ -360,14 +339,27 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'download_history_page'):
             self.download_history_page.load_download_history()
     
+    @Slot(int, str)
+    def on_convert_progress_new(self, percent, message):
+        """处理转换进度更新（新版本，接收百分比和消息）"""
+        # 将进度传递给下载页面
+        self.download_page.on_convert_progress(percent, message)
+        
+        # 记录重要进度到日志
+        if percent % 10 == 0 and percent > self.last_logged_percent:
+            self.log_message(f"转换进度: {percent}%")
+            self.last_logged_percent = percent
+        elif "初始化" in message or "开始" in message:
+            self.log_message(f"转换进度: {message}")
+    
     def on_convert_progress(self, message):
-        """处理转换进度消息"""
+        """处理转换进度消息（旧版本，兼容性保留）"""
         # 将转换进度消息记录到历史记录界面
         if not message.startswith("正在转换"):  # 避免记录太多重复的百分比消息
             self.log_message(f"转换进度: {message}")
     
     def on_convert_percent(self, percent):
-        """处理转换百分比更新"""
+        """处理转换百分比更新（旧版本，兼容性保留）"""
         # 每10%记录一次进度到历史记录
         if percent > 0 and percent % 10 == 0 and percent > self.last_logged_percent:
             self.log_message(f"转换进度: {percent}%")
@@ -398,18 +390,32 @@ class MainWindow(QMainWindow):
             self.download_history_page.load_download_history()
     
     def disconnect_convert_signals(self):
-        """安全断开转换线程的信号连接"""
+        """安全断开转换相关的信号连接"""
         try:
+            # 尝试断开下载线程的转换信号连接
+            if hasattr(self, 'download_thread') and self.download_thread:
+                try:
+                    if self.download_thread.convert_progress.receivers(self.on_convert_progress_new) > 0:
+                        self.download_thread.convert_progress.disconnect(self.on_convert_progress_new)
+                except Exception:
+                    pass
+                
+                try:
+                    if self.download_thread.convert_finished.receivers(self.on_convert_finished) > 0:
+                        self.download_thread.convert_finished.disconnect(self.on_convert_finished)
+                except Exception:
+                    pass
+            
+            # 兼容性代码：尝试断开下载页面中可能存在的转换线程的信号连接
             if hasattr(self, 'download_page') and hasattr(self.download_page, 'convert_thread'):
                 convert_thread = self.download_page.convert_thread
                 
-                # 先检查信号是否仍然连接
                 if convert_thread:
                     try:
                         if convert_thread.convert_progress.receivers(self.on_convert_progress) > 0:
                             convert_thread.convert_progress.disconnect(self.on_convert_progress)
                     except Exception:
-                        pass  # 忽略断开失败的情况
+                        pass
                     
                     try:
                         if convert_thread.convert_percent.receivers(self.on_convert_percent) > 0:
@@ -423,7 +429,7 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
         except Exception as e:
-            logging.error(f"断开转换线程信号时发生错误: {str(e)}")
+            logging.error(f"断开转换相关信号时发生错误: {str(e)}")
     
     @Slot()
     def cancel_fetch_info(self):
@@ -451,8 +457,17 @@ class MainWindow(QMainWindow):
             "输出目录",           # 已经在其他地方记录
             "[download]",        # 下载进度信息已经通过progress_callback处理
             "ETA",               # 剩余时间信息已经通过progress_callback处理
-            "Destination"        # 目标文件信息不需要记录
+            "Destination",       # 目标文件信息不需要记录
+            "发现下载目标路径",    # 不再重复记录路径信息
+            "捕获到视频ID",       # 内部处理消息，不需要记录
+            "捕获到视频标题",      # 内部处理消息，不需要记录
+            "捕获到合并输出路径",   # 内部处理消息，不需要记录
+            "执行命令"            # 不再重复记录命令信息
         ]
+        
+        # 如果消息为空，不记录
+        if not message.strip():
+            return
         
         # 如果消息包含任何需要跳过的模式，则不记录
         for pattern in skip_patterns:
@@ -552,7 +567,9 @@ class MainWindow(QMainWindow):
             # 清理下载目录中超过30天的webm文件
             downloads_deleted = clean_old_files(DOWNLOADS_DIR, days=30, extensions=['.webm'])
             
-            if temp_deleted > 0 or downloads_deleted > 0:
+            # 只记录一次总结日志
+            total_deleted = temp_deleted + downloads_deleted
+            if total_deleted > 0:
                 logging.info(f"自动清理完成: 临时目录删除了{temp_deleted}个文件，下载目录删除了{downloads_deleted}个过期WebM文件")
         except Exception as e:
             logging.error(f"自动清理临时文件失败: {e}")

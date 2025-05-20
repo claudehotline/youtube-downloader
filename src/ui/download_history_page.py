@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                          QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                          QHeaderView, QAbstractItemView, QMenu, QMessageBox,
                          QLineEdit, QToolBar, QComboBox, QSizePolicy, QSpacerItem,
-                         QDialog, QDialogButtonBox, QTextEdit, QStyle)
+                         QDialog, QDialogButtonBox, QTextEdit, QStyle, QProgressBar)
 from PySide6.QtCore import Qt, Signal, QSize, QDateTime, QEvent, QTimer, QItemSelectionModel
 from PySide6.QtGui import QIcon, QAction
 import os
@@ -10,6 +10,8 @@ import datetime
 import locale
 from src.db.download_history import DownloadHistoryDB
 from src.ui.convert_dialog import ConvertDialog
+from src.utils.video_utils import convert_video
+import glob
 
 
 class DownloadHistoryPage(QWidget):
@@ -199,8 +201,12 @@ class DownloadHistoryPage(QWidget):
             self.history_table.setItem(i, 2, QTableWidgetItem(format_str))
             
             # 输出路径
-            output_path = record['output_path'] or "未知"
-            self.history_table.setItem(i, 3, QTableWidgetItem(output_path))
+            path_item = QTableWidgetItem(record['output_path'] if record['output_path'] else "")
+            self.history_table.setItem(i, 3, path_item)
+            
+            # 检查是否有翻译后的字幕
+            if record.get('subtitle_path') and os.path.exists(record.get('subtitle_path')):
+                path_item.setToolTip(f"字幕文件: {record.get('subtitle_path')}")
             
             # 文件大小
             file_size = record['file_size'] or 0
@@ -333,6 +339,26 @@ class DownloadHistoryPage(QWidget):
                 convert_action = QAction("转换为MP4", self)
                 convert_action.triggered.connect(lambda: self.on_continue_conversion_triggered(record))
                 menu.addAction(convert_action)
+                
+            # 添加字幕翻译选项
+            if record['subtitles']:  # 如果有下载字幕
+                translate_action = QAction("翻译字幕", self)
+                translate_action.triggered.connect(lambda: self.on_translate_subtitle_triggered(record))
+                menu.addAction(translate_action)
+            else:
+                # 即使没有记录字幕，也尝试在视频目录查找字幕文件
+                if record['output_path'] and os.path.exists(record['output_path']):
+                    video_dir = os.path.dirname(record['output_path'])
+                    video_name = os.path.splitext(os.path.basename(record['output_path']))[0]
+                    subtitle_files = []
+                    for ext in ['.srt', '.vtt', '.ass']:
+                        pattern = os.path.join(video_dir, f"{video_name}*{ext}")
+                        subtitle_files.extend(glob.glob(pattern))
+                    
+                    if subtitle_files:
+                        translate_action = QAction("翻译字幕", self)
+                        translate_action.triggered.connect(lambda: self.on_translate_subtitle_triggered(record))
+                        menu.addAction(translate_action)
         elif record['status'] in ['失败', '已取消']:
             continue_action = QAction("继续下载", self)
             continue_action.triggered.connect(lambda: self.on_continue_download_triggered(record))
@@ -450,6 +476,9 @@ class DownloadHistoryPage(QWidget):
         
         if record['subtitles']:
             html += f"<p><b>字幕:</b> {record['subtitles']}</p>"
+            
+        if record.get('subtitle_path') and os.path.exists(record.get('subtitle_path')):
+            html += f"<p><b>字幕文件:</b> {record.get('subtitle_path')}</p>"
         
         if record['output_path']:
             html += f"<p><b>输出路径:</b> {record['output_path']}</p>"
@@ -561,12 +590,304 @@ class DownloadHistoryPage(QWidget):
             if reply == QMessageBox.StandardButton.No:
                 return
         
-        # 创建并显示转换对话框，直接传递记录ID
-        dialog = ConvertDialog(webm_path, self, record_id=record['id'])
-        dialog.exec()
+        # 使用新的转换函数代替创建转换对话框
+        from src.utils.video_utils import convert_video
         
-        # 转换结束后刷新列表
-        self.load_download_history()
+        # 创建转换对话框，显示进度
+        dialog = QDialog(self)
+        dialog.setWindowTitle("视频格式转换")
+        dialog.setMinimumWidth(400)
+        
+        # 设置对话框UI
+        layout = QVBoxLayout(dialog)
+        
+        # 标题和文件名
+        title_label = QLabel("<b>正在将WebM文件转换为MP4格式</b>")
+        title_label.setAlignment(Qt.AlignCenter)
+        
+        # 显示文件名
+        file_name = os.path.basename(webm_path)
+        file_label = QLabel(f"文件: {file_name}")
+        
+        # 进度条
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        
+        # 状态标签
+        status_label = QLabel("准备转换...")
+        status_label.setWordWrap(True)
+        
+        # 按钮
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("取消")
+        close_button = QPushButton("关闭")
+        close_button.setEnabled(False)  # 转换完成前禁用
+        
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(close_button)
+        
+        # 添加所有元素到布局
+        layout.addWidget(title_label)
+        layout.addWidget(file_label)
+        layout.addWidget(progress_bar)
+        layout.addWidget(status_label)
+        layout.addLayout(button_layout)
+        
+        # 设置对话框模式和大小
+        dialog.setModal(True)
+        dialog.resize(450, 200)
+        
+        # 调用转换需要的回调函数
+        conversion_cancelled = [False]  # 用于跟踪取消状态
+        
+        def progress_callback(percent, message):
+            # 更新进度条
+            progress_bar.setValue(percent)
+            
+            # 更新状态标签，格式化显示信息
+            if "转换中" in message or "%" in message:
+                status_label.setText(f"转换进度: {percent}%")
+            else:
+                status_label.setText(message)
+                
+            # 确保UI及时更新
+            QApplication.processEvents()
+            
+            # 如果取消标志被设置，返回False
+            return not conversion_cancelled[0]
+        
+        def finished_callback(success, message, file_path):
+            # 更新进度条
+            progress_bar.setValue(100 if success else 0)
+            
+            # 更新状态标签
+            if success:
+                status_label.setText("转换完成！")
+                title_label.setText("<b>转换完成</b>")
+            else:
+                status_label.setText(f"转换失败: {message}")
+                title_label.setText("<b>转换失败</b>")
+            
+            # 更新按钮状态
+            cancel_button.setEnabled(False)
+            close_button.setEnabled(True)
+            
+            # 转换后刷新列表
+            self.load_download_history()
+        
+        # 连接取消和关闭按钮信号
+        def on_cancel_clicked():
+            conversion_cancelled[0] = True
+            cancel_button.setEnabled(False)
+            status_label.setText("正在取消转换...")
+            progress_bar.setRange(0, 0)  # 设置为未确定状态
+            
+        def on_close_clicked():
+            dialog.close()
+            
+        cancel_button.clicked.connect(on_cancel_clicked)
+        close_button.clicked.connect(on_close_clicked)
+        
+        # 显示对话框
+        dialog.show()
+        
+        # 启动转换（在对话框显示后）
+        convert_video(
+            file_path=webm_path,
+            record_id=record['id'],
+            progress_callback=progress_callback,
+            finished_callback=finished_callback
+        )
+        
+        # 执行对话框
+        dialog.exec()
+    
+    def on_translate_subtitle_triggered(self, record):
+        """翻译字幕"""
+        if not record:
+            return
+            
+        # 检查输出路径是否存在
+        if not record['output_path'] or not os.path.exists(record['output_path']):
+            QMessageBox.warning(self, "无法翻译", "视频文件不存在，无法找到对应的字幕文件")
+            return
+        
+        # 查找可能的字幕文件
+        video_dir = os.path.dirname(record['output_path'])
+        video_name = os.path.splitext(os.path.basename(record['output_path']))[0]
+        subtitle_files = []
+        
+        # 查找可能的字幕文件
+        for ext in ['.srt', '.vtt', '.ass']:
+            pattern = os.path.join(video_dir, f"{video_name}*{ext}")
+            subtitle_files.extend(glob.glob(pattern))
+        
+        if not subtitle_files:
+            QMessageBox.warning(self, "无法翻译", "未找到字幕文件")
+            return
+            
+        # 如果找到多个字幕文件，让用户选择
+        selected_subtitle = None
+        if len(subtitle_files) == 1:
+            selected_subtitle = subtitle_files[0]
+        else:
+            # 创建选择对话框
+            from PySide6.QtWidgets import QInputDialog
+            selected_subtitle, ok = QInputDialog.getItem(
+                self, "选择字幕文件", "请选择要翻译的字幕文件:", 
+                subtitle_files, 0, False
+            )
+            if not ok or not selected_subtitle:
+                return
+        
+        # 创建进度对话框
+        progress_dialog = QDialog(self)
+        progress_dialog.setWindowTitle("翻译字幕")
+        progress_dialog.setModal(True)
+        progress_dialog.setMinimumWidth(400)
+        
+        layout = QVBoxLayout(progress_dialog)
+        
+        # 添加标签
+        status_label = QLabel("正在翻译字幕...")
+        layout.addWidget(status_label)
+        
+        # 添加进度条
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        layout.addWidget(progress_bar)
+        
+        # 添加详细信息
+        detail_label = QLabel("准备中...")
+        layout.addWidget(detail_label)
+        
+        # 添加按钮
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("取消")
+        close_button = QPushButton("关闭")
+        close_button.setEnabled(False)
+        
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+        
+        # 设置状态变量
+        is_translating = [True]
+        is_cancelled = [False]
+        translated_path = [None]
+        
+        # 导入配置和翻译器
+        from src.config_manager import ConfigManager
+        from src.utils.subtitle_translator import SubtitleTranslator
+        import threading
+        
+        # 获取翻译配置
+        config = ConfigManager()
+        use_n8n = config.getboolean("Subtitle", "use_n8n", fallback=True)
+        n8n_workflow_url = config.get("Subtitle", "n8n_workflow_url", fallback="http://localhost:5678/webhook/translate")
+        force_translate_traditional = config.getboolean("Subtitle", "force_translate_traditional", fallback=True)
+        
+        # 更新进度信息的回调函数
+        def update_progress(percent, message):
+            if not is_cancelled[0]:
+                progress_bar.setValue(percent)
+                detail_label.setText(message)
+        
+        # 翻译完成的回调函数
+        def translation_finished(success, message, path=None):
+            is_translating[0] = False
+            if not is_cancelled[0]:
+                if success:
+                    translated_path[0] = path
+                    status_label.setText("翻译完成")
+                    detail_label.setText(f"翻译结果保存在: {path}")
+                    progress_bar.setValue(100)
+                    
+                    # 更新数据库中的字幕路径
+                    self.db.update_subtitle_path(record.get('id'), path)
+                    
+                    # 移除成功弹窗，只在对话框中显示状态
+                else:
+                    status_label.setText("翻译失败")
+                    detail_label.setText(message)
+                    # 失败时也不显示额外弹窗
+            
+            # 启用关闭按钮，禁用取消按钮
+            cancel_button.setEnabled(False)
+            close_button.setEnabled(True)
+        
+        # 进行翻译的函数
+        def do_translate():
+            try:
+                # 初始化翻译器
+                translator = SubtitleTranslator(
+                    translation_api_url=n8n_workflow_url,
+                    force_translate_traditional=force_translate_traditional,
+                    use_n8n=use_n8n
+                )
+                
+                # 更新进度
+                update_progress(10, "检测字幕语言...")
+                
+                # 检测字幕语言
+                is_chinese, is_traditional = translator.is_chinese_subtitle(selected_subtitle)
+                
+                # 根据检测结果更新进度
+                if is_chinese and not is_traditional:
+                    update_progress(100, "字幕已经是简体中文，无需翻译")
+                    translation_finished(True, "字幕已经是简体中文，无需翻译", selected_subtitle)
+                    return
+                
+                # 更新进度
+                if is_chinese and is_traditional:
+                    update_progress(20, "检测到繁体中文字幕，开始翻译...")
+                else:
+                    update_progress(20, "检测到外语字幕，开始翻译...")
+                
+                # 进行翻译
+                if is_cancelled[0]:
+                    return
+                    
+                update_progress(30, "正在翻译字幕，这可能需要一些时间...")
+                translated_path = translator.translate(selected_subtitle)
+                
+                if translated_path and translated_path != selected_subtitle:
+                    update_progress(90, "翻译完成，正在保存...")
+                    translation_finished(True, "翻译完成", translated_path)
+                else:
+                    translation_finished(False, "翻译失败，请检查网络连接或服务配置")
+            except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
+                translation_finished(False, f"翻译过程中出错: {str(e)}\n\n{error_details}")
+        
+        # 取消按钮点击事件
+        def on_cancel_clicked():
+            is_cancelled[0] = True
+            status_label.setText("正在取消...")
+            cancel_button.setEnabled(False)
+            # 不能真正取消正在进行的HTTP请求，但可以停止后续处理
+        
+        # 关闭按钮点击事件
+        def on_close_clicked():
+            progress_dialog.accept()
+        
+        # 连接按钮信号
+        cancel_button.clicked.connect(on_cancel_clicked)
+        close_button.clicked.connect(on_close_clicked)
+        
+        # 在新线程中执行翻译
+        threading.Thread(target=do_translate, daemon=True).start()
+        
+        # 显示对话框
+        progress_dialog.exec()
+        
+        # 如果翻译成功，重新加载历史记录
+        if translated_path[0]:
+            self.load_download_history()
     
     def showEvent(self, event):
         """页面显示时触发"""

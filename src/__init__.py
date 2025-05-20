@@ -2,6 +2,7 @@ import logging
 import sys
 import os
 import subprocess
+import logging.handlers
 
 # 处理无控制台模式下sys.stdout和sys.stderr可能为None的情况
 if sys.stdout is None:
@@ -9,12 +10,9 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding='utf-8')
 
-# 设置日志格式
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# 设置日志格式 - 移除basicConfig，让main.py中的配置生效
+# 由于Python日志系统的设计，第一个basicConfig会生效，后续的会被忽略
+# 所以我们在这里只设置一些基本变量，不调用basicConfig
 
 # 检查ffmpeg是否已安装
 def check_ffmpeg():

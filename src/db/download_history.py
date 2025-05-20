@@ -31,26 +31,44 @@ class DownloadHistoryDB:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # 创建下载历史记录表
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS download_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                video_id TEXT,
-                title TEXT NOT NULL,
-                url TEXT NOT NULL,
-                thumbnail_url TEXT,
-                video_format TEXT,
-                audio_format TEXT,
-                subtitles TEXT,
-                output_path TEXT,
-                file_size INTEGER DEFAULT 0,
-                status TEXT NOT NULL,
-                start_time INTEGER NOT NULL,
-                end_time INTEGER,
-                duration INTEGER,
-                error_message TEXT
-            )
-            ''')
+            # 检查表是否存在
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='download_history'")
+            table_exists = cursor.fetchone()
+            
+            if not table_exists:
+                # 创建下载历史记录表
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS download_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    video_id TEXT,
+                    title TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    thumbnail_url TEXT,
+                    video_format TEXT,
+                    audio_format TEXT,
+                    subtitles TEXT,
+                    subtitle_path TEXT,
+                    output_path TEXT,
+                    file_size INTEGER DEFAULT 0,
+                    status TEXT NOT NULL,
+                    start_time INTEGER NOT NULL,
+                    end_time INTEGER,
+                    duration INTEGER,
+                    error_message TEXT
+                )
+                ''')
+            else:
+                # 检查subtitle_path列是否存在
+                cursor.execute("PRAGMA table_info(download_history)")
+                columns = [col[1] for col in cursor.fetchall()]
+                
+                # 如果不存在subtitle_path列，添加它
+                if 'subtitle_path' not in columns:
+                    try:
+                        cursor.execute("ALTER TABLE download_history ADD COLUMN subtitle_path TEXT")
+                        logging.info("成功添加subtitle_path列到download_history表")
+                    except sqlite3.OperationalError as e:
+                        logging.error(f"添加subtitle_path列时出错: {e}")
             
             conn.commit()
     
@@ -87,10 +105,10 @@ class DownloadHistoryDB:
             cursor.execute('''
             INSERT INTO download_history 
             (video_id, title, url, thumbnail_url, video_format, audio_format, 
-             subtitles, output_path, status, start_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             subtitles, subtitle_path, output_path, status, start_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (video_id, title, url, thumbnail_url, video_format, audio_format, 
-                  subtitles_str, output_path, '进行中', current_time))
+                  subtitles_str, None, output_path, '进行中', current_time))
             
             conn.commit()
             return cursor.lastrowid
@@ -143,7 +161,7 @@ class DownloadHistoryDB:
         
         Args:
             file_path: 文件路径（webm或mp4）
-            status: 新状态（完成 或 转换中断）
+            status: 新状态（转换完成 或 转换中断）
             error_message: 错误信息（如果有）
             record_id: 记录ID，必须提供
             
@@ -216,6 +234,31 @@ class DownloadHistoryDB:
             cursor.execute(query, params)
             conn.commit()
             return True
+    
+    def update_subtitle_path(self, record_id, subtitle_path):
+        """更新字幕文件路径
+        
+        Args:
+            record_id: 记录ID
+            subtitle_path: 字幕文件路径
+            
+        Returns:
+            bool: 是否成功更新
+        """
+        if not record_id or not subtitle_path:
+            return False
+            
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # 更新字幕路径
+            cursor.execute(
+                "UPDATE download_history SET subtitle_path = ? WHERE id = ?",
+                (subtitle_path, record_id)
+            )
+            
+            # 检查是否更新了记录
+            return cursor.rowcount > 0
     
     def get_all_downloads(self, limit=100, offset=0):
         """获取所有下载记录

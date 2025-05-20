@@ -295,106 +295,23 @@ class DownloadPage(QWidget):
         self.status_label.setText("正在准备下载...")
     
     def on_cancel_button_clicked(self):
-        self.cancel_button.setEnabled(False)
-        self.status_label.setText("正在取消操作...")
+        """取消按钮点击处理"""
+        # 如果在下载过程中
+        if hasattr(self, 'download_thread') and self.download_thread and self.download_thread.isRunning():
+            reply = QMessageBox.question(
+                self, "确认取消", 
+                "确定要取消当前下载吗？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # 发送取消信号
+                self.cancel_download_requested.emit()
+                self.status_label.setText("正在取消下载...")
+                self.cancel_button.setEnabled(False)  # 防止重复点击
         
-        # 如果有转换线程正在运行，先终止它
-        if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.isRunning():
-            self.status_label.setText("正在取消视频转换...")
-            self.progress_detail_label.setText("正在终止ffmpeg进程，请稍候...")
-            
-            # 添加转换取消的直观反馈
-            self.progress_bar.setRange(0, 0)  # 设置为未确定状态，显示滚动条
-            
-            # 日志记录取消请求
-            logging.info("用户点击取消按钮，正在强制终止转换")
-            
-            # 立即发出取消信号
-            if self.convert_thread.process and self.convert_thread.process.poll() is None:
-                try:
-                    # 直接使用os命令终止进程
-                    pid = self.convert_thread.process.pid
-                    logging.info(f"立即使用OS命令终止进程 PID:{pid}")
-                    if os.name == 'nt':
-                        os.system(f'TASKKILL /F /PID {pid} /T')
-                    else:
-                        os.system(f'kill -9 {pid}')
-                except Exception as e:
-                    logging.error(f"使用OS命令终止进程失败: {str(e)}")
-            
-            # 调用转换线程的取消方法
-            self.convert_thread.cancel()
-            
-            # 如果在3秒内转换线程仍在运行，强制终止它
-            QTimer.singleShot(3000, self.force_stop_convert_thread)
-            
-            # 设置一个定时器定期检查取消状态
-            self.check_cancel_timer = QTimer(self)
-            self.check_cancel_timer.timeout.connect(self.check_convert_cancellation)
-            self.check_cancel_timer.start(300)  # 每300毫秒检查一次
-            
-            return  # 提前返回，剩下的由定时器处理
-        
-        # 取消下载进程
-        self.cancel_download_requested.emit()
-    
-    def force_stop_convert_thread(self):
-        """强制终止转换线程"""
-        if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.isRunning():
-            logging.warning("转换线程3秒后仍在运行，强制终止")
-            self.convert_thread.terminate()  # 强制终止线程
-            self.convert_thread.wait(1000)   # 等待最多1秒
-            
-            # 重置UI状态
-            self.progress_bar.setRange(0, 100)
-            self.progress_bar.setValue(0)
-            self.status_label.setText("视频转换已强制终止")
-            self.progress_detail_label.setText("")
-            self.download_button.setEnabled(True)
-            self.cancel_button.setEnabled(True)
-    
-    def check_convert_cancellation(self):
-        """检查转换取消状态"""
-        if not hasattr(self, 'convert_thread') or not self.convert_thread or not self.convert_thread.isRunning():
-            # 转换线程已经不在运行，取消成功
-            self.check_cancel_timer.stop()
-            self.progress_bar.setRange(0, 100)  # 恢复正常范围
-            self.progress_bar.setValue(0)
-            self.status_label.setText("视频转换已取消")
-            self.progress_detail_label.setText("")
-            self.download_button.setEnabled(True)
-            self.cancel_button.setEnabled(True)
-        elif hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.is_canceled:
-            # 转换已标记为取消，但可能仍在处理资源清理
-            self.status_label.setText("转换取消中...")
-            self.progress_detail_label.setText("正在清理资源，可能需要几秒钟...")
-            
-            # 如果进程仍在运行，再次尝试终止
-            if self.convert_thread.process and self.convert_thread.process.poll() is None:
-                try:
-                    pid = self.convert_thread.process.pid
-                    logging.info(f"再次尝试终止顽固进程 PID:{pid}")
-                    if os.name == 'nt':
-                        os.system(f'TASKKILL /F /PID {pid} /T')
-                    else:
-                        os.system(f'kill -9 {pid}')
-                except Exception as e:
-                    logging.error(f"再次终止进程失败: {str(e)}")
-        else:
-            # 尝试再次取消
-            self.convert_thread.cancel()
-            self.status_label.setText("再次尝试终止转换进程...")
-            
-            # 计数检查次数，如果超过10次(3秒)仍未取消成功，强制终止线程
-            if not hasattr(self, 'cancel_check_count'):
-                self.cancel_check_count = 0
-            self.cancel_check_count += 1
-            
-            if self.cancel_check_count > 10:
-                logging.warning("多次取消尝试失败，强制终止线程")
-                self.force_stop_convert_thread()
-                self.check_cancel_timer.stop()
-                self.cancel_check_count = 0
+        # 如果有正在运行的转换线程，也需要取消它
+        # 下载线程现在负责转换，所以只需向下载线程发送取消信号
     
     def start_loading_animation(self):
         """启动加载动画"""
@@ -642,28 +559,13 @@ class DownloadPage(QWidget):
     def download_complete(self, success, message):
         """下载完成处理"""
         self.status_label.setText(message)
-        self.download_button.setEnabled(True)
-        self.cancel_button.setEnabled(False)  # 下载完成后停用取消按钮
         self.progress_detail_label.setText("")
         
-        # 关键修复：在线程引用可能消失前直接提取记录ID并存储为全局变量
-        if hasattr(self, 'download_thread') and self.download_thread:
-            thread_id = id(self.download_thread)  # 获取线程对象ID，用于日志跟踪
-            record_id = getattr(self.download_thread, 'download_record_id', None)
-            downloaded_file = getattr(self.download_thread, 'downloaded_file', None)
-            
-            logging.info(f"直接从下载线程(ID:{thread_id})获取: record_id={record_id}")
-            
-            # 更新类属性
-            if record_id is not None:
-                self.last_download_id = record_id
-                logging.info(f"成功保存下载记录ID: {self.last_download_id}")
-            
-            if downloaded_file:
-                self.last_download_file = downloaded_file
-                logging.info(f"成功保存下载文件路径: {self.last_download_file}")
-        else:
-            logging.error("下载完成时无法访问下载线程对象")
+        # 下载完成后启用下载按钮
+        self.download_button.setEnabled(True)
+        
+        # 下载完成后禁用取消按钮
+        self.cancel_button.setEnabled(False)
         
         if success:
             # 从消息中提取文件路径（如果类属性中没有）
@@ -672,160 +574,48 @@ class DownloadPage(QWidget):
                 file_path = message.split("路径:")[1].strip()
                 self.last_download_file = file_path
                 logging.info(f"从消息提取文件路径: {file_path}")
-            
-            # 检查是否需要将非MP4文件转换为MP4
-            if file_path and os.path.exists(file_path):
-                # 获取文件扩展名
-                _, ext = os.path.splitext(file_path)
-                
-                # 如果不是MP4格式，需要转换
-                if ext.lower() != '.mp4':
-                    # 显示转换中的状态
-                    file_type = ext.upper().lstrip('.')
-                    self.status_label.setText(f"准备转换{file_type}为MP4格式...")
-                    self.progress_bar.setValue(0)  # 重置进度条
-                    
-                    # 重新启用取消按钮，确保用户可以取消转换
-                    self.cancel_button.setEnabled(True)
-                    
-                    # 创建转换选项
-                    convert_options = {
-                        'video_codec': 'av1_nvenc',   # 使用NVIDIA GPU加速AV1编码器
-                        'preset': 'p7',               # 最高质量预设
-                        'tune': 'uhq',                # 超高质量调优
-                        'rc': 'vbr',                  # 使用可变比特率模式
-                        'cq': 20,                     # AV1的VBR质量值(0-63，值越低质量越高)
-                        'audio_bitrate': '320k',      # 音频比特率
-                        'keep_source_bitrate': True,  # 保持原视频比特率
-                        'multipass': 'qres',          # 两通道编码，第一通道使用四分之一分辨率
-                        'rc-lookahead': 32,           # 前瞻帧数，提高编码质量
-                        'spatial-aq': True,           # 空间自适应量化，提高视觉质量
-                        'temporal-aq': True,          # 时间自适应量化，提高动态场景质量
-                        'aq-strength': 8,             # AQ强度(1-15)
-                        'tf_level': 0,                # 时间滤波级别
-                        'lookahead_level': 3,         # 前瞻级别
-                        'fallback_codecs': ['h264_nvenc', 'hevc_nvenc', 'libx264'],  # 备用编码器列表
-                        'gpu': 0                      # 固定使用GPU 0
-                    }
-                    
-                    # 使用已保存的记录ID
-                    record_id = self.last_download_id
-                    logging.info(f"准备开始转换，记录ID: {record_id}, 文件: {file_path}")
-                    
-                    # 创建并启动转换线程
-                    self.convert_thread = ConvertThread(file_path, options=convert_options, record_id=record_id)
-                    self.convert_thread.convert_progress.connect(self.on_convert_progress)
-                    self.convert_thread.convert_percent.connect(self.on_convert_percent)
-                    self.convert_thread.convert_finished.connect(self.on_convert_finished)
-                    self.convert_thread.start()
-                    
-                    # 确保取消按钮在转换期间保持启用状态
-                    self.cancel_button.setEnabled(True)
-                    
-                    # 禁用下载按钮，直到转换完成
-                    self.download_button.setEnabled(False)
-                    return  # 提前返回，等待转换完成
-            
-            # 如果没有发生转换，显示原始的成功消息并设置正常颜色
-            self.status_label.setText(message)
-            self.status_label.setStyleSheet("")
         elif message != "下载已取消":
             # 显示错误消息，并设置红色
             self.status_label.setText(f"错误: {message}")
             self.status_label.setStyleSheet("color: red;")
     
-    def on_convert_progress(self, message):
+    def on_convert_progress(self, percent, message):
         """处理转换进度更新"""
-        self.status_label.setText(message)
-        # 确保取消按钮始终可用
-        self.cancel_button.setEnabled(True)
-        
-    def on_convert_percent(self, percent):
-        """处理转换百分比更新"""
         # 更新进度条
         self.progress_bar.setRange(0, 100)  # 确保范围正确
         self.progress_bar.setValue(percent)
-        # 确保取消按钮始终可用
-        self.cancel_button.setEnabled(True)
         
+        # 更新状态标签仅显示转换操作的状态
+        if "转换中" in message or "%" in message:
+            self.status_label.setText("视频转换中...")
+        else:
+            self.status_label.setText(f"视频转换: {message}")
+        
+        # 在详细进度标签中显示百分比
+        if percent > 0:
+            self.progress_detail_label.setText(f"已完成: {percent}%")
+        else:
+            self.progress_detail_label.setText("")
+    
     def on_convert_finished(self, success, message, file_path):
         """处理转换完成"""
-        # 连接数据库
-        db = DownloadHistoryDB()
-        
-        # 恢复进度条的正常范围
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100 if success else 0)
         self.download_button.setEnabled(True)
         self.cancel_button.setEnabled(False)  # 转换完成后禁用取消按钮
         
-        # 获取转换线程中的记录ID
-        record_id = None
-        if hasattr(self, 'convert_thread') and self.convert_thread:
-            record_id = self.convert_thread.record_id
-            
-        # 如果是由取消操作导致的，显示取消信息而不是错误，并更新数据库
-        if hasattr(self, 'convert_thread') and self.convert_thread and self.convert_thread.is_canceled:
-            self.status_label.setText("视频转换已取消")
-            self.status_label.setStyleSheet("")
-            logging.info("用户取消了视频转换")
-            
-            # 更新数据库中的转换状态为"转换中断"
-            db.update_conversion_status(
-                file_path=file_path,
-                status="转换中断",
-                error_message="用户取消了视频转换",
-                record_id=record_id
-            )
-            return
-        
         if success:
-            # 获取原始文件路径和扩展名
-            original_file = None
-            # 尝试查找原始文件，支持多种格式
-            for ext in ['.webm', '.mkv', '.avi', '.flv', '.mov']:
-                possible_file = file_path.replace('.mp4', ext)
-                if os.path.exists(possible_file):
-                    original_file = possible_file
-                    break
-            
-            # 更新数据库中的状态为"完成"，并更新为mp4文件路径
-            db.update_conversion_status(
-                file_path=file_path,
-                status="完成",
-                record_id=record_id
-            )
-            
-            # 直接删除原始文件，不再询问
-            try:
-                if original_file and os.path.exists(original_file):
-                    os.remove(original_file)
-                    converted_message = "下载并转换完成"
-                    logging.info(f"已自动删除原始文件: {original_file}")
-                else:
-                    converted_message = "下载并转换完成"
-            except Exception as e:
-                logging.error(f"删除原始文件失败: {e}")
-                converted_message = "下载并转换完成"
-            
-            # 在状态标签显示消息，不再显示对话框
-            self.status_label.setText(converted_message)
+            # 在状态标签显示成功消息
+            self.status_label.setText("下载并转换完成")
+            self.status_label.setStyleSheet("")
         else:
-            # 转换失败，更新数据库
-            db.update_conversion_status(
-                file_path=file_path,
-                status="转换中断",
-                error_message=f"转换失败: {message}",
-                record_id=record_id
-            )
-            
-            # 转换失败显示错误信息，但不再弹出对话框
+            # 转换失败但下载成功的情况
             file_type = os.path.splitext(file_path)[1].upper().lstrip('.')
             error_message = f"{file_type}文件转换为MP4失败，但下载已完成"
             self.status_label.setText(error_message)
             self.status_label.setStyleSheet("color: red;")
             logging.error(f"转换失败: {message}，文件路径: {file_path}")
-
+    
     def set_preset_formats(self, video_format=None, audio_format=None, subtitles=None):
         """设置预设的格式选项，用于重新下载或继续下载"""
         self.preset_video_format = video_format

@@ -11,6 +11,9 @@ import time
 from src.config import DEFAULT_TIMEOUT, MAX_RETRIES, NETWORK_WAIT
 import sys
 from pathlib import Path
+import logging
+from src.utils.subtitle_translator import SubtitleTranslator
+from src.config_manager import ConfigManager
 
 # 调整yt-dlp.exe的路径
 YTDLP_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cmd", "yt-dlp.exe")
@@ -32,6 +35,7 @@ class YtDownloader:
         self.is_cancelled = False  # 取消标志
         self.debug_callback = debug_callback  # 调试信息回调
         self.always_use_cookies = always_use_cookies  # 是否总是使用cookies
+        self.config_manager = ConfigManager()  # 配置管理器
     
     def debug(self, message: str):
         """输出调试信息，过滤重复的进度信息"""
@@ -43,30 +47,47 @@ class YtDownloader:
             "100%"           # 完成信息
         ]
         
+        # 始终记录的重要信息模式
+        important_patterns = [
+            "合并",          # 合并相关信息
+            "已下载",        # 下载完成信息
+            "错误",          # 错误信息
+            "失败",          # 失败信息
+            "完成"           # 完成信息
+        ]
+        
+        # 检查是否包含重要信息
+        is_important = any(pattern in message for pattern in important_patterns)
+        
         # 过滤控制台输出，跳过频繁更新的进度信息
         should_print = True
-        for pattern in skip_patterns:
-            if pattern in message:
-                # 对于下载进度，只在每10%时输出一次
-                if "[download]" in message and "%" in message:
-                    try:
-                        # 尝试提取百分比
-                        percent_part = message.split("%")[0]
-                        percent_part = percent_part.split("[download]")[1].strip()
-                        percent = float(percent_part)
-                        # 只在整10%时输出
-                        if percent % 10 != 0 or percent == 0:
-                            should_print = False
-                    except:
-                        pass
-                else:
-                    should_print = False
-                break
+        if not is_important:  # 如果不是重要信息，则应用过滤
+            for pattern in skip_patterns:
+                if pattern in message:
+                    # 对于下载进度，只在每10%时输出一次
+                    if "[download]" in message and "%" in message:
+                        try:
+                            # 尝试提取百分比
+                            percent_part = message.split("%")[0]
+                            percent_part = percent_part.split("[download]")[1].strip()
+                            percent = float(percent_part)
+                            # 只在整10%时输出
+                            if percent % 10 != 0 or percent == 0:
+                                should_print = False
+                        except:
+                            pass
+                    else:
+                        should_print = False
+                    break
         
-        if should_print:
-            print(f"[YtDownloader] {message}")
-        
-        # 不再通过callback重复输出，由主窗口统一处理控制台重定向
+        # 只使用日志系统输出，不再使用print重复输出
+        if is_important or should_print:
+            formatted_message = f"[YtDownloader] {message}"
+            # 如果有回调函数，则调用回调函数
+            if self.debug_callback:
+                self.debug_callback(message)
+            # 只使用logging记录日志，避免重复输出
+            logging.info(formatted_message)
     
     def cancel_download(self):
         """
@@ -284,6 +305,7 @@ class YtDownloader:
             self.is_cancelled = False
             self.download_process = None
             downloaded_file_path = None
+            subtitle_files = []  # 记录下载的字幕文件路径列表
             
             # 调试信息
             self.debug(f"开始下载：{url}")
@@ -343,6 +365,13 @@ class YtDownloader:
                     line = subtitle_process.stdout.readline()
                     if not line:
                         break
+                    
+                    # 捕获字幕文件路径
+                    if "Writing video subtitles to: " in line:
+                        subtitle_path = line.split("Writing video subtitles to: ", 1)[1].strip()
+                        self.debug(f"捕获到字幕文件路径: {subtitle_path}")
+                        subtitle_files.append(subtitle_path)
+                    
                     self.debug(f"字幕: {line.strip()}")
                 
                 subtitle_process.wait()
@@ -350,6 +379,19 @@ class YtDownloader:
                     if progress_callback:
                         progress_callback(0, "下载已取消")
                     return None
+                
+                # 翻译下载的字幕文件
+                if subtitle_files:
+                    try:
+                        if progress_callback:
+                            progress_callback(0, "字幕下载完成")
+                            
+                        # 记录字幕文件路径但不翻译
+                        for subtitle_path in subtitle_files:
+                            if os.path.exists(subtitle_path):
+                                self.debug(f"下载的字幕文件: {subtitle_path}")
+                    except Exception as e:
+                        self.debug(f"处理字幕过程中出错: {str(e)}")
             
             # 3. 处理缩略图下载
             if should_download_thumbnail:
@@ -545,27 +587,27 @@ class YtDownloader:
                 dest_match = destination_pattern.search(line)
                 if dest_match:
                     potential_path = dest_match.group(1).strip()
-                    self.debug(f"发现下载目标路径: {potential_path}")
-                    # 保存最后一个目标路径
-                    if os.path.isabs(potential_path):  # 确保是绝对路径
+                    # 不再重复输出相同的目标路径
+                    if os.path.isabs(potential_path) and (not downloaded_file_path or downloaded_file_path != potential_path):  # 确保是绝对路径且不重复
+                        self.debug(f"发现下载目标路径: {potential_path}")
                         downloaded_file_path = potential_path
                 
                 # 捕获[download] Destination格式的路径
                 download_dest_match = download_dest_pattern.search(line)
                 if download_dest_match:
                     potential_path = download_dest_match.group(1).strip()
-                    self.debug(f"发现下载目标路径: {potential_path}")
-                    # 保存最后一个目标路径
-                    if os.path.isabs(potential_path):  # 确保是绝对路径
+                    # 不再重复输出相同的目标路径
+                    if os.path.isabs(potential_path) and (not downloaded_file_path or downloaded_file_path != potential_path):  # 确保是绝对路径且不重复
+                        self.debug(f"发现下载目标路径: {potential_path}")
                         downloaded_file_path = potential_path
                 
                 # 捕获合并输出路径
                 merged_match = merged_into_pattern.search(line)
                 if merged_match:
                     potential_path = merged_match.group(1).strip()
-                    self.debug(f"发现合并输出路径: {potential_path}")
-                    # 保存合并输出路径
-                    if os.path.isabs(potential_path):  # 确保是绝对路径
+                    # 不再重复输出相同的目标路径
+                    if os.path.isabs(potential_path) and (not downloaded_file_path or downloaded_file_path != potential_path):  # 确保是绝对路径且不重复
+                        self.debug(f"发现合并输出路径: {potential_path}")
                         downloaded_file_path = potential_path
                 
                 # 检查是否是下载进度信息
@@ -656,6 +698,20 @@ class YtDownloader:
                         progress_callback(100, f"下载完成, 路径: {downloaded_file_path}")
                     else:
                         progress_callback(100, "下载完成，但无法确定文件路径")
+            
+            # 遍历输出目录查找字幕文件
+            if not self.is_cancelled and output_dir:
+                try:
+                    # 在下载完成后查找可能的字幕文件
+                    subtitle_paths = []
+                    for ext in ['.srt', '.vtt', '.ass']:
+                        subtitle_paths.extend(glob.glob(os.path.join(output_dir, f"*{ext}")))
+                    
+                    if subtitle_paths:
+                        self.debug(f"找到字幕文件: {subtitle_paths}")
+                        # 不再自动翻译字幕，用户可以在下载历史中使用右键菜单手动翻译
+                except Exception as e:
+                    self.debug(f"查找字幕文件时出错: {str(e)}")
             
             return downloaded_file_path  # 返回下载的文件路径
             

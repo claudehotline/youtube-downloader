@@ -83,7 +83,10 @@ def clean_old_files(directory: str, days: int = 7, extensions: Optional[list] = 
     except Exception as e:
         logger.error(f"清理目录时出错: {directory}, 错误: {e}")
     
-    logger.info(f"共删除 {deleted_count} 个过期文件")
+    # 只有当删除了文件时才记录日志
+    if deleted_count > 0:
+        logger.info(f"共删除 {deleted_count} 个过期文件")
+    
     return deleted_count
 
 def safe_str(obj: Any) -> str:
@@ -390,6 +393,7 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                         with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
                             progress_pattern = re.compile(r'time=(\d+:\d+:\d+.\d+)')
                             last_percent = 0
+                            last_report_time = time.time()
                             
                             while True:
                                 # 检查是否已经请求终止
@@ -420,6 +424,12 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                                     if not os.path.exists(log_path):
                                         break
                                     
+                                    # 每3秒，即使没有新进度也发送当前进度，保持UI响应
+                                    current_time = time.time()
+                                    if current_time - last_report_time > 3 and last_percent > 0:
+                                        last_report_time = current_time
+                                        handle_callback(last_percent, f"转换中: {last_percent}%", current_process)
+                                    
                                     time.sleep(0.1)
                                     f.seek(where)
                                     continue
@@ -436,9 +446,11 @@ def convert_webm_to_mp4(input_file: str, output_file: Optional[str] = None,
                                         # 计算进度百分比
                                         percent = min(int((seconds / duration) * 100), 99)  # 最多到99%，留给完成信号
                                         
-                                        # 仅在进度有变化时才更新
-                                        if percent != last_percent:
+                                        # 仅在进度有变化或经过一定时间后才更新
+                                        current_time = time.time()
+                                        if percent != last_percent or current_time - last_report_time > 1:
                                             last_percent = percent
+                                            last_report_time = current_time
                                             # 立即传递进程引用和进度
                                             handle_callback(percent, f"转换中: {percent}%", current_process)
                     except Exception as e:
@@ -721,3 +733,205 @@ def terminate_process(process):
     except Exception as e:
         logger.error(f"终止进程 {process.pid} 时出错: {str(e)}")
         logger.error(traceback.format_exc())
+
+def convert_video(
+    file_path: str,
+    record_id: Optional[int] = None,
+    progress_callback: Optional[Callable[[int, str], bool]] = None,
+    finished_callback: Optional[Callable[[bool, str, str], None]] = None
+) -> None:
+    """
+    执行视频格式转换的完整流程，包括转换、数据库更新和原始文件删除
+    
+    Args:
+        file_path: 要转换的文件路径
+        record_id: 数据库记录ID，用于更新状态
+        progress_callback: 进度更新回调函数
+        finished_callback: 转换完成后的回调函数
+    """
+    logger.info(f"开始视频转换流程，文件: {file_path}, 记录ID: {record_id}")
+    
+    # 确保文件存在
+    if not os.path.exists(file_path):
+        error_msg = f"要转换的文件不存在: {file_path}"
+        logger.error(error_msg)
+        if finished_callback:
+            finished_callback(False, error_msg, file_path)
+        return
+    
+    # 获取文件扩展名，确定是否需要转换
+    _, ext = os.path.splitext(file_path)
+    if ext.lower() == '.mp4':
+        logger.info(f"文件已经是MP4格式，无需转换: {file_path}")
+        if finished_callback:
+            finished_callback(True, "文件已经是MP4格式，无需转换", file_path)
+        return
+    
+    # 设置默认转换选项
+    convert_options = {
+        'video_codec': 'av1_nvenc',   # 使用NVIDIA GPU加速AV1编码器
+        'preset': 'p7',               # 最高质量预设
+        'tune': 'uhq',                # 超高质量调优
+        'rc': 'vbr',                  # 使用可变比特率模式
+        'cq': 20,                     # AV1的VBR质量值(0-63，值越低质量越高)
+        'audio_bitrate': '320k',      # 音频比特率
+        'keep_source_bitrate': True,  # 保持原视频比特率
+        'multipass': 'qres',          # 两通道编码，第一通道使用四分之一分辨率
+        'rc-lookahead': 32,           # 前瞻帧数，提高编码质量
+        'spatial-aq': True,           # 空间自适应量化，提高视觉质量
+        'temporal-aq': True,          # 时间自适应量化，提高动态场景质量
+        'aq-strength': 8,             # AQ强度(1-15)
+        'tf_level': 0,                # 时间滤波级别
+        'lookahead_level': 3,         # 前瞻级别
+        'fallback_codecs': ['h264_nvenc', 'hevc_nvenc', 'libx264'],  # 备用编码器列表
+        'gpu': 0                      # 固定使用GPU 0
+    }
+    
+    # 生成目标文件路径
+    target_file = file_path.replace(ext, '.mp4')
+    
+    # 初始化转换并首先发送开始信息
+    if progress_callback:
+        progress_callback(0, "准备开始转换...")
+    
+    # 转发进度更新到回调函数并添加进程引用参数
+    conversion_cancelled = [False]  # 使用列表作为可变对象来跟踪取消状态
+    last_percent = [0]  # 跟踪上次发送的百分比
+    
+    def internal_progress_callback(percent, message, process_ref=None):
+        if progress_callback:
+            # 更新进度信息，使其更具体
+            updated_message = message
+            if "转换中" in message:
+                updated_message = f"正在转换: {percent}%"
+            elif "开始转换" in message:
+                updated_message = "正在初始化转换..."
+            
+            # 只有当百分比发生实质性变化或消息发生变化时才调用外部回调
+            if percent != last_percent[0] or "转换中" not in message:
+                last_percent[0] = percent
+                # 调用外部进度回调
+                result = progress_callback(percent, updated_message)
+                # 如果返回False，表示请求取消
+                if result is False:
+                    conversion_cancelled[0] = True
+                    return False
+        return True
+    
+    try:
+        # 执行转换
+        start_time = time.time()
+        
+        # 调用外部回调通知转换开始
+        if progress_callback:
+            progress_callback(0, "开始转换视频...")
+        
+        output_file = convert_webm_to_mp4(
+            file_path, 
+            output_file=target_file,
+            progress_callback=internal_progress_callback,
+            options=convert_options
+        )
+        
+        # 如果转换被取消
+        if conversion_cancelled[0]:
+            logger.info("视频转换被取消")
+            # 更新数据库状态
+            if record_id:
+                try:
+                    from src.db.download_history import DownloadHistoryDB
+                    db = DownloadHistoryDB()
+                    db.update_conversion_status(
+                        file_path=file_path,
+                        status="转换中断",
+                        error_message="用户取消了视频转换",
+                        record_id=record_id
+                    )
+                except Exception as e:
+                    logger.error(f"更新数据库状态失败: {str(e)}")
+            
+            # 调用完成回调
+            if finished_callback:
+                finished_callback(False, "用户取消了转换", file_path)
+            return
+        
+        # 检查转换结果
+        if output_file.endswith('.mp4') and os.path.exists(output_file):
+            elapsed_time = time.time() - start_time
+            success_message = f"转换完成，耗时: {elapsed_time:.2f}秒"
+            logger.info(success_message)
+            
+            # 确保最后发送100%进度
+            if progress_callback:
+                progress_callback(100, "转换完成")
+            
+            # 更新数据库
+            if record_id:
+                try:
+                    from src.db.download_history import DownloadHistoryDB
+                    db = DownloadHistoryDB()
+                    db.update_conversion_status(
+                        file_path=output_file,
+                        status="完成",
+                        record_id=record_id
+                    )
+                    logger.info(f"已更新MP4文件路径到数据库，记录ID: {record_id}, 文件: {output_file}")
+                except Exception as e:
+                    logger.error(f"更新MP4文件路径到数据库失败: {str(e)}")
+            
+            # 删除原始文件
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"已自动删除原始文件: {file_path}")
+            except Exception as e:
+                logger.error(f"删除原始文件失败: {str(e)}")
+            
+            # 调用完成回调
+            if finished_callback:
+                finished_callback(True, success_message, output_file)
+        else:
+            error_message = f"转换失败，请检查源文件和转换设置，文件路径: {file_path}"
+            logger.error(error_message)
+            
+            # 更新数据库状态
+            if record_id:
+                try:
+                    from src.db.download_history import DownloadHistoryDB
+                    db = DownloadHistoryDB()
+                    db.update_conversion_status(
+                        file_path=file_path,
+                        status="转换中断",
+                        error_message=error_message,
+                        record_id=record_id
+                    )
+                except Exception as e:
+                    logger.error(f"更新数据库状态失败: {str(e)}")
+            
+            # 调用完成回调
+            if finished_callback:
+                finished_callback(False, error_message, file_path)
+    except Exception as e:
+        # 捕获转换过程中的任何异常
+        error_details = traceback.format_exc()
+        error_message = f"转换过程中出错: {str(e)}"
+        logger.error(error_message)
+        logger.error(error_details)
+        
+        # 更新数据库状态
+        if record_id:
+            try:
+                from src.db.download_history import DownloadHistoryDB
+                db = DownloadHistoryDB()
+                db.update_conversion_status(
+                    file_path=file_path,
+                    status="转换中断",
+                    error_message=error_message,
+                    record_id=record_id
+                )
+            except Exception as ex:
+                logger.error(f"更新数据库状态失败: {str(ex)}")
+        
+        # 调用完成回调
+        if finished_callback:
+            finished_callback(False, error_message, file_path)

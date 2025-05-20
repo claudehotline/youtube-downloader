@@ -25,6 +25,11 @@ class ConfigManager:
                 "Theme": "Fusion",
                 "MinWidth": "1000",
                 "MinHeight": "720"
+            },
+            "Subtitle": {
+                "use_n8n": "True",
+                "n8n_workflow_url": "http://localhost:5678/webhook/translate",
+                "force_translate_traditional": "True"
             }
         }
         

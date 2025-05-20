@@ -89,13 +89,14 @@ def configure_logging():
     today = datetime.now().strftime("%Y-%m-%d")
     log_file = os.path.join(log_dir, f"yt-dlp-{today}.log")
     
-    # 配置根日志记录器
+    # 配置根日志记录器，仅写入文件不重复输出到控制台
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
+            logging.FileHandler(log_file, encoding='utf-8')
+            # 移除标准输出处理器，避免重复日志
+            # logging.StreamHandler(sys.stdout)
         ]
     )
     
@@ -106,11 +107,12 @@ def main():
     configure_logging()
     
     # 检查ffmpeg是否已安装
-    try:
-        import ffmpeg
-        logging.info("ffmpeg-python已安装")
-    except ImportError:
-        logging.error("ffmpeg-python未安装，某些功能可能不可用")
+    # 这部分代码可以移除，因为已经在__init__.py中执行过了
+    # try:
+    #     import ffmpeg
+    #     logging.info("ffmpeg-python已安装")
+    # except ImportError:
+    #     logging.error("ffmpeg-python未安装，某些功能可能不可用")
     
     # 初始化配置管理器
     config_manager = ConfigManager()

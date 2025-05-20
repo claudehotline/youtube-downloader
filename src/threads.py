@@ -33,6 +33,8 @@ class FetchInfoThread(QThread):
 class DownloadThread(QThread):
     progress_updated = Signal(int, str)
     download_finished = Signal(bool, str)
+    convert_progress = Signal(int, str)  # 添加转换进度信号
+    convert_finished = Signal(bool, str, str)  # 添加转换完成信号
     
     def __init__(self, downloader, video_url, video_format, audio_format, subtitles, thumbnail, output_dir, threads=10, use_cookies=False, browser=None, video_info=None, resume=False, output_path=None):
         super().__init__()
@@ -143,7 +145,7 @@ class DownloadThread(QThread):
                     
                     self.db.update_download_status(
                         self.download_record_id, 
-                        status='完成',
+                        status='下载完成',
                         output_path=downloaded_file,
                         file_size=file_size
                     )
@@ -151,14 +153,44 @@ class DownloadThread(QThread):
                     # 下载完成但找不到文件
                     self.db.update_download_status(
                         self.download_record_id, 
-                        status='完成',
+                        status='下载完成',
                         error_message='找不到下载的文件'
                     )
             
-            # 只有在未取消的情况下才发送完成信号
+            # 只有在未取消的情况下才发送完成信号并尝试转换
             if not self.downloader.is_cancelled:
                 if downloaded_file and os.path.exists(downloaded_file):
                     self.download_finished.emit(True, f"下载完成, 路径: {downloaded_file}")
+                    
+                    # 检查文件扩展名
+                    _, ext = os.path.splitext(downloaded_file)
+                    
+                    # 如果不是MP4格式，进行转换
+                    if ext.lower() != '.mp4':
+                        logging.info(f"下载完成，开始自动转换: {downloaded_file}")
+                        
+                        # 导入视频工具模块
+                        from src.utils.video_utils import convert_video
+                        
+                        # 定义进度回调函数
+                        def convert_progress_callback(percent, message):
+                            # 发送进度信号
+                            self.convert_progress.emit(percent, message)
+                            # 检查是否下载线程已被取消
+                            return not self.downloader.is_cancelled
+                        
+                        # 定义完成回调函数
+                        def convert_finished_callback(success, message, file_path):
+                            # 发送完成信号
+                            self.convert_finished.emit(success, message, file_path)
+                        
+                        # 直接调用转换函数，传递记录ID
+                        convert_video(
+                            file_path=downloaded_file,
+                            record_id=self.download_record_id,
+                            progress_callback=convert_progress_callback,
+                            finished_callback=convert_finished_callback
+                        )
                 else:
                     self.download_finished.emit(True, "下载完成！")
         except Exception as e:
@@ -269,7 +301,7 @@ class ConvertThread(QThread):
                     db = DownloadHistoryDB()
                     db.update_conversion_status(
                         output_file,  # MP4文件路径
-                        status="完成",
+                        status="转换完成",
                         record_id=self.record_id  # 使用指定的记录ID
                     )
                     logging.info(f"已更新MP4文件路径到数据库，记录ID: {self.record_id}, 文件: {output_file}")
