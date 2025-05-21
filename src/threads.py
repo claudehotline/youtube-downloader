@@ -1,4 +1,4 @@
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, QMetaObject
 import os
 import logging
 import time
@@ -9,6 +9,7 @@ import subprocess
 import json
 import re
 import glob
+from PySide6.QtCore import Qt
 
 
 class FetchInfoThread(QThread):
@@ -123,6 +124,108 @@ class DownloadThread(QThread):
             # 保存下载文件路径到类属性
             self.downloaded_file = downloaded_file
             
+            # 检查下载的字幕文件并更新数据库
+            if self.download_record_id and self.subtitles:
+                # 首先尝试从下载器中获取字幕文件
+                subtitle_files = []
+                if hasattr(self.downloader, 'subtitle_files'):
+                    subtitle_files = getattr(self.downloader, 'subtitle_files', [])
+                
+                # 找到有效的字幕文件路径
+                subtitle_path = None
+                
+                # 1. 如果下载器已经捕获到字幕文件
+                if subtitle_files and len(subtitle_files) > 0:
+                    for path in subtitle_files:
+                        if os.path.exists(path):
+                            subtitle_path = path
+                            logging.info(f"使用下载器捕获的字幕文件路径: {subtitle_path}")
+                            break
+                
+                # 2. 如果没有找到有效的字幕路径，尝试在输出目录中查找
+                if not subtitle_path and self.output_dir and os.path.exists(self.output_dir):
+                    logging.info("在输出目录中查找字幕文件")
+                    try:
+                        # 在输出目录中查找所有字幕文件
+                        potential_subtitles = []
+                        for ext in ['.srt', '.vtt', '.ass']:
+                            potential_subtitles.extend(glob.glob(os.path.join(self.output_dir, f"*{ext}")))
+                        
+                        if potential_subtitles:
+                            # 按修改时间排序，获取最新的
+                            potential_subtitles.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                            subtitle_path = potential_subtitles[0]
+                            logging.info(f"在输出目录找到最新的字幕文件: {subtitle_path}")
+                    except Exception as e:
+                        logging.error(f"在输出目录查找字幕文件时出错: {str(e)}")
+                
+                # 3. 如果有视频文件，尝试根据视频文件名查找字幕
+                if not subtitle_path and downloaded_file and os.path.exists(downloaded_file):
+                    logging.info("根据视频文件名查找字幕文件")
+                    try:
+                        video_dir = os.path.dirname(downloaded_file)
+                        video_name = os.path.splitext(os.path.basename(downloaded_file))[0]
+                        
+                        # 先尝试精确匹配
+                        subtitle_candidates = []
+                        for ext in ['.srt', '.vtt', '.ass']:
+                            # 精确匹配
+                            exact_path = os.path.join(video_dir, f"{video_name}{ext}")
+                            if os.path.exists(exact_path):
+                                subtitle_candidates.append(exact_path)
+                            # 模糊匹配
+                            pattern = os.path.join(video_dir, f"{video_name}*{ext}")
+                            subtitle_candidates.extend(glob.glob(pattern))
+                        
+                        if subtitle_candidates:
+                            # 按修改时间排序，获取最新的
+                            subtitle_candidates.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                            subtitle_path = subtitle_candidates[0]
+                            logging.info(f"根据视频文件名找到字幕文件: {subtitle_path}")
+                    except Exception as e:
+                        logging.error(f"根据视频文件名查找字幕文件时出错: {str(e)}")
+                
+                # 4. 如果还没找到但有字幕选项参数，尝试在整个输出目录中查找任何字幕文件
+                if not subtitle_path and self.output_dir:
+                    logging.info("尝试在输出目录中查找任何字幕文件")
+                    try:
+                        # 查找所有字幕文件
+                        all_subtitles = []
+                        for root, dirs, files in os.walk(self.output_dir):
+                            for file in files:
+                                if file.endswith(('.srt', '.vtt', '.ass')):
+                                    all_subtitles.append(os.path.join(root, file))
+                        
+                        if all_subtitles:
+                            # 按修改时间排序，获取最新的
+                            all_subtitles.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                            subtitle_path = all_subtitles[0]
+                            logging.info(f"找到最新的字幕文件: {subtitle_path}")
+                    except Exception as e:
+                        logging.error(f"查找所有字幕文件时出错: {str(e)}")
+                
+                # 如果找到了字幕文件路径，更新数据库
+                if subtitle_path:
+                    # 检查文件是否有效
+                    try:
+                        if os.path.exists(subtitle_path) and os.path.getsize(subtitle_path) > 0:
+                            # 验证是否是文本文件
+                            with open(subtitle_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content_sample = f.read(500)  # 读取前500个字符
+                                is_valid = any(marker in content_sample.lower() for marker in ['webvtt', 'srt', '-->', '[script info]'])
+                            
+                            if is_valid:
+                                logging.info(f"更新字幕文件路径到数据库: {subtitle_path}")
+                                self.db.update_subtitle_path(self.download_record_id, subtitle_path)
+                            else:
+                                logging.warning(f"字幕文件内容无效: {subtitle_path}")
+                        else:
+                            logging.warning(f"字幕文件不存在或大小为0: {subtitle_path}")
+                    except Exception as e:
+                        logging.error(f"验证字幕文件时出错: {str(e)}")
+                else:
+                    logging.warning("未找到任何字幕文件")
+            
             # 更新下载记录
             if self.download_record_id:
                 if self.downloader.is_cancelled:
@@ -174,8 +277,31 @@ class DownloadThread(QThread):
                         
                         # 定义进度回调函数
                         def convert_progress_callback(percent, message):
+                            # 确保百分比是有效值
+                            try:
+                                percent_value = int(float(percent))
+                                percent_value = max(0, min(100, percent_value))  # 限制在0-100范围内
+                            except:
+                                # 如果百分比无效，尝试从消息中提取
+                                percent_value = 0
+                                if isinstance(message, str) and "%" in message:
+                                    try:
+                                        percent_str = message.split("%")[0].strip().split(" ")[-1]
+                                        percent_value = int(float(percent_str))
+                                        percent_value = max(0, min(100, percent_value))
+                                    except:
+                                        percent_value = 0
+                            
+                            # 美化消息
+                            display_message = message
+                            if isinstance(message, str):
+                                if "转换中" in message and "%" in message:
+                                    # 使用提取的百分比值构建消息
+                                    display_message = f"转换中: {percent_value}%"
+                            
                             # 发送进度信号
-                            self.convert_progress.emit(percent, message)
+                            self.convert_progress.emit(percent_value, display_message)
+                            
                             # 检查是否下载线程已被取消
                             return not self.downloader.is_cancelled
                         
@@ -193,6 +319,38 @@ class DownloadThread(QThread):
                         )
                 else:
                     self.download_finished.emit(True, "下载完成！")
+            
+            # 下载完成后刷新历史页面
+            try:
+                # 尝试通过各种路径找到主窗口
+                main_window = None
+                
+                # 直接使用parent
+                if hasattr(self, 'parent') and self.parent and hasattr(self.parent, 'refresh_download_history'):
+                    main_window = self.parent
+                # 如果parent是QWidget，可能是子页面，主窗口是其parent
+                elif hasattr(self, 'parent') and self.parent and hasattr(self.parent, 'parent') and callable(getattr(self.parent, 'parent', None)):
+                    parent_widget = self.parent.parent()
+                    if parent_widget and hasattr(parent_widget, 'refresh_download_history'):
+                        main_window = parent_widget
+                    # 尝试再向上一级查找
+                    elif parent_widget and hasattr(parent_widget, 'parent') and callable(getattr(parent_widget, 'parent', None)):
+                        grandparent = parent_widget.parent()
+                        if grandparent and hasattr(grandparent, 'refresh_download_history'):
+                            main_window = grandparent
+                
+                if main_window:
+                    logging.debug("下载完成，准备刷新下载历史列表")
+                    QMetaObject.invokeMethod(main_window, "refresh_download_history", 
+                                        Qt.ConnectionType.QueuedConnection)
+                else:
+                    # 将警告级别降为调试级别
+                    logging.debug("未找到有refresh_download_history方法的窗口对象，这是正常的")
+            except Exception as e:
+                logging.error(f"尝试刷新下载历史时出错: {str(e)}")
+                import traceback
+                logging.error(traceback.format_exc())
+                
         except Exception as e:
             # 更新下载记录为失败状态
             if self.download_record_id:

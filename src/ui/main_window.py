@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QHBoxLayout,
 from PySide6.QtCore import Qt, Slot, QTimer
 import logging
 import os
+import traceback
 
 from src.ui.download_page import DownloadPage
 from src.ui.settings_page import SettingsPage
@@ -39,6 +40,9 @@ class MainWindow(QMainWindow):
         
         # 初始化进度记录变量
         self.last_logged_percent = 0
+        
+        # 验证数据库并初始化
+        self.initialize_database()
         
         self.setWindowTitle(APP_NAME)
         
@@ -342,15 +346,40 @@ class MainWindow(QMainWindow):
     @Slot(int, str)
     def on_convert_progress_new(self, percent, message):
         """处理转换进度更新（新版本，接收百分比和消息）"""
-        # 将进度传递给下载页面
-        self.download_page.on_convert_progress(percent, message)
-        
-        # 记录重要进度到日志
-        if percent % 10 == 0 and percent > self.last_logged_percent:
-            self.log_message(f"转换进度: {percent}%")
-            self.last_logged_percent = percent
-        elif "初始化" in message or "开始" in message:
-            self.log_message(f"转换进度: {message}")
+        try:
+            # 确保百分比是有效的整数
+            if not isinstance(percent, (int, float)):
+                # 尝试从消息中提取百分比
+                if "%" in message:
+                    try:
+                        percent_str = message.split("%")[0].strip().split(" ")[-1]
+                        percent = int(float(percent_str))
+                    except:
+                        percent = 0
+                else:
+                    percent = 0
+            
+            # 确保百分比在有效范围内
+            percent = max(0, min(100, int(percent)))
+            
+            # 将进度传递给下载页面
+            if hasattr(self, 'download_page'):
+                try:
+                    self.download_page.on_convert_progress(percent, message)
+                except Exception as e:
+                    logging.error(f"向下载页面传递转换进度时出错: {str(e)}")
+            
+            # 记录重要进度到日志
+            if percent % 10 == 0 and percent > self.last_logged_percent:
+                self.log_message(f"转换进度: {percent}%")
+                self.last_logged_percent = percent
+            elif "初始化" in message or "开始" in message or "完成" in message or "错误" in message or "失败" in message:
+                self.log_message(f"转换状态: {message}")
+        except Exception as e:
+            logging.error(f"处理转换进度时出错: {str(e)}")
+            # 尝试传递原始消息
+            if hasattr(self, 'download_page'):
+                self.download_page.on_convert_progress(0, f"处理进度时出错: {message}")
     
     def on_convert_progress(self, message):
         """处理转换进度消息（旧版本，兼容性保留）"""
@@ -395,14 +424,24 @@ class MainWindow(QMainWindow):
             # 尝试断开下载线程的转换信号连接
             if hasattr(self, 'download_thread') and self.download_thread:
                 try:
-                    if self.download_thread.convert_progress.receivers(self.on_convert_progress_new) > 0:
-                        self.download_thread.convert_progress.disconnect(self.on_convert_progress_new)
+                    # 先检查是否有连接，然后再尝试断开特定的连接
+                    if hasattr(self, 'on_convert_progress_new') and hasattr(self.download_thread, 'convert_progress'):
+                        try:
+                            # 先检查是否有连接信号
+                            if self.download_thread.convert_progress.receivers(self.on_convert_progress_new) > 0:
+                                self.download_thread.convert_progress.disconnect(self.on_convert_progress_new)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 
                 try:
-                    if self.download_thread.convert_finished.receivers(self.on_convert_finished) > 0:
-                        self.download_thread.convert_finished.disconnect(self.on_convert_finished)
+                    if hasattr(self, 'on_convert_finished') and hasattr(self.download_thread, 'convert_finished'):
+                        try:
+                            if self.download_thread.convert_finished.receivers(self.on_convert_finished) > 0:
+                                self.download_thread.convert_finished.disconnect(self.on_convert_finished)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
             
@@ -412,20 +451,23 @@ class MainWindow(QMainWindow):
                 
                 if convert_thread:
                     try:
-                        if convert_thread.convert_progress.receivers(self.on_convert_progress) > 0:
-                            convert_thread.convert_progress.disconnect(self.on_convert_progress)
+                        if hasattr(self, 'on_convert_progress') and hasattr(convert_thread, 'convert_progress'):
+                            if convert_thread.convert_progress.receivers(self.on_convert_progress) > 0:
+                                convert_thread.convert_progress.disconnect(self.on_convert_progress)
                     except Exception:
                         pass
                     
                     try:
-                        if convert_thread.convert_percent.receivers(self.on_convert_percent) > 0:
-                            convert_thread.convert_percent.disconnect(self.on_convert_percent)
+                        if hasattr(self, 'on_convert_percent') and hasattr(convert_thread, 'convert_percent'):
+                            if convert_thread.convert_percent.receivers(self.on_convert_percent) > 0:
+                                convert_thread.convert_percent.disconnect(self.on_convert_percent)
                     except Exception:
                         pass
                     
                     try:
-                        if convert_thread.convert_finished.receivers(self.on_convert_finished) > 0:
-                            convert_thread.convert_finished.disconnect(self.on_convert_finished)
+                        if hasattr(self, 'on_convert_finished') and hasattr(convert_thread, 'convert_finished'):
+                            if convert_thread.convert_finished.receivers(self.on_convert_finished) > 0:
+                                convert_thread.convert_finished.disconnect(self.on_convert_finished)
                     except Exception:
                         pass
         except Exception as e:
@@ -641,5 +683,43 @@ class MainWindow(QMainWindow):
 
     def refresh_download_history(self):
         """刷新下载历史列表"""
-        if hasattr(self, 'download_history_page'):
+        try:
+            logging.debug("开始刷新下载历史列表")
+            
+            if hasattr(self, 'download_history_page'):
+                # 使用QTimer延迟执行，确保UI事件循环有机会处理其他事件
+                QTimer.singleShot(100, self._refresh_history_table)
+            else:
+                logging.warning("下载历史页面未初始化，无法刷新列表")
+        except Exception as e:
+            logging.error(f"刷新下载历史列表时出错: {str(e)}")
+            
+    def _refresh_history_table(self):
+        """实际执行历史记录刷新的方法"""
+        try:
+            # 调用下载历史页面的加载方法
             self.download_history_page.load_download_history()
+            logging.debug("下载历史列表刷新完成")
+        except Exception as e:
+            logging.error(f"刷新下载历史表时出错: {str(e)}")
+            logging.error(traceback.format_exc())
+
+    def initialize_database(self):
+        """初始化并验证下载历史数据库"""
+        try:
+            # 初始化数据库
+            from src.db.download_history import DownloadHistoryDB
+            db = DownloadHistoryDB()
+            
+            # 验证数据库状态
+            result = db.validate_database()
+            logging.info(f"数据库验证结果: {result}")
+            
+            # 如果数据库存在但没有记录，可以添加一些测试数据
+            if result["exists"] and result["tables_exist"] and result["record_count"] == 0:
+                logging.info("数据库表存在但无记录，尝试添加测试数据")
+                db.add_test_data(count=3)
+            
+        except Exception as e:
+            logging.error(f"初始化数据库时出错: {str(e)}")
+            logging.error(traceback.format_exc())

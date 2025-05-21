@@ -800,31 +800,54 @@ def convert_video(
     
     def internal_progress_callback(percent, message, process_ref=None):
         if progress_callback:
-            # 更新进度信息，使其更具体
-            updated_message = message
+            # 确保百分比是有效值
+            valid_percent = percent
+            try:
+                valid_percent = int(float(percent))
+                valid_percent = max(0, min(100, valid_percent))  # 限制在0-100范围内
+            except:
+                valid_percent = 0
+                
+            # 格式化消息以提供更好的用户体验
+            formatted_message = message
             if "转换中" in message:
-                updated_message = f"正在转换: {percent}%"
+                formatted_message = f"正在转换: {valid_percent}%"
             elif "开始转换" in message:
-                updated_message = "正在初始化转换..."
+                formatted_message = "正在初始化转换..."
+            elif "probe" in message.lower() or "检测" in message:
+                formatted_message = "正在分析视频信息..."
             
-            # 只有当百分比发生实质性变化或消息发生变化时才调用外部回调
-            if percent != last_percent[0] or "转换中" not in message:
-                last_percent[0] = percent
+            # 防止取消标志在多线程环境中出现竞争条件
+            current_cancel_state = conversion_cancelled[0]
+            # 记录当前百分比用于跟踪
+            current_percent = valid_percent
+            
+            # 只有在以下情况更新UI:
+            # 1. 百分比显著变化 (>2%)
+            # 2. 消息内容变化 (不是普通的进度更新)
+            # 3. 当前百分比是整10的倍数
+            percent_change = abs(current_percent - last_percent[0])
+            is_milestone = current_percent % 10 == 0 and current_percent != last_percent[0]
+            
+            if percent_change >= 2 or "转换中" not in message or is_milestone:
+                last_percent[0] = current_percent
                 # 调用外部进度回调
-                result = progress_callback(percent, updated_message)
+                result = progress_callback(valid_percent, formatted_message)
                 # 如果返回False，表示请求取消
                 if result is False:
                     conversion_cancelled[0] = True
                     return False
-        return True
+        return not conversion_cancelled[0]
     
     try:
         # 执行转换
         start_time = time.time()
         
         # 调用外部回调通知转换开始
-        if progress_callback:
-            progress_callback(0, "开始转换视频...")
+        if progress_callback and hasattr(progress_callback, '__self__'):
+            parent = getattr(progress_callback, '__self__')
+            if parent and hasattr(parent, 'show_progress'):
+                parent.show_progress(0, "开始转换视频...")
         
         output_file = convert_webm_to_mp4(
             file_path, 
@@ -862,8 +885,10 @@ def convert_video(
             logger.info(success_message)
             
             # 确保最后发送100%进度
-            if progress_callback:
-                progress_callback(100, "转换完成")
+            if progress_callback and hasattr(progress_callback, '__self__'):
+                parent = getattr(progress_callback, '__self__')
+                if parent and hasattr(parent, 'show_progress'):
+                    parent.show_progress(100, "转换完成")
             
             # 更新数据库
             if record_id:
@@ -890,6 +915,48 @@ def convert_video(
             # 调用完成回调
             if finished_callback:
                 finished_callback(True, success_message, output_file)
+            
+            # 尝试查找父窗口并刷新下载历史列表
+            try:
+                # 从回调函数中找到父窗口
+                parent = None
+                if progress_callback and hasattr(progress_callback, '__self__'):
+                    parent = getattr(progress_callback, '__self__')
+                elif finished_callback and hasattr(finished_callback, '__self__'):
+                    parent = getattr(finished_callback, '__self__')
+                    
+                # 尝试找到包含refresh_download_history方法的窗口
+                main_window = None
+                
+                # 直接检查parent是否有方法
+                if parent and hasattr(parent, 'refresh_download_history'):
+                    main_window = parent
+                # 检查parent.parent()
+                elif parent and hasattr(parent, 'parent') and callable(getattr(parent, 'parent', None)):
+                    parent_widget = parent.parent()
+                    if parent_widget and hasattr(parent_widget, 'refresh_download_history'):
+                        main_window = parent_widget
+                    # 尝试再向上一级
+                    elif parent_widget and hasattr(parent_widget, 'parent') and callable(getattr(parent_widget, 'parent', None)):
+                        grandparent = parent_widget.parent()
+                        if grandparent and hasattr(grandparent, 'refresh_download_history'):
+                            main_window = grandparent
+                
+                # 找到主窗口，调用刷新方法
+                if main_window:
+                    logger.debug(f"视频转换完成，准备刷新下载历史列表 (record_id: {record_id})")
+                    from PySide6.QtCore import QMetaObject, Qt
+                    QMetaObject.invokeMethod(main_window, "refresh_download_history", 
+                                        Qt.ConnectionType.QueuedConnection)
+                else:
+                    # 将警告改为调试消息，因为这种情况是正常的
+                    logger.debug("未找到有refresh_download_history方法的窗口对象，这是正常情况")
+            except Exception as e:
+                logger.warning(f"尝试刷新下载历史时出错: {str(e)}")
+                import traceback
+                logger.debug(traceback.format_exc())
+            
+            return output_file
         else:
             error_message = f"转换失败，请检查源文件和转换设置，文件路径: {file_path}"
             logger.error(error_message)
@@ -911,6 +978,7 @@ def convert_video(
             # 调用完成回调
             if finished_callback:
                 finished_callback(False, error_message, file_path)
+            return
     except Exception as e:
         # 捕获转换过程中的任何异常
         error_details = traceback.format_exc()
@@ -935,3 +1003,4 @@ def convert_video(
         # 调用完成回调
         if finished_callback:
             finished_callback(False, error_message, file_path)
+        return
